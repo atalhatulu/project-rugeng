@@ -1,0 +1,37 @@
+{
+  "name": "BulletHellArena",
+  "version": 2,
+  "environment": {
+    "ambient_color": [0.05, 0.06, 0.08, 1.0],
+    "gravity": [0.0, 0.0],
+    "author": "Project-Ember"
+  },
+  "entities": [
+    {
+      "id": 1,
+      "name": "PlayerShip",
+      "pos": [640.0, 580.0],
+      "size": [28.0, 28.0],
+      "rotation": 0.0,
+      "color": [255, 255, 255, 255],
+      "texture": "textures/player_ship.png",
+      "has_collider": true,
+      "is_dynamic": true,
+      "is_sensor": false,
+      "velocity": [0.0, 0.0]
+    },
+    {
+      "id": 2,
+      "name": "BossCore",
+      "pos": [640.0, 140.0],
+      "size": [50.0, 50.0],
+      "rotation": 0.0,
+      "color": [220, 50, 240, 255],
+      "texture": "textures/boss_core.png",
+      "has_collider": true,
+      "is_dynamic": false,
+      "is_sensor": true,
+      "velocity": [0.0, 0.0]
+    }
+  ]
+}

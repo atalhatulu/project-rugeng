@@ -1,0 +1,13 @@
+[package]
+name = "rugeng_editor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rugeng_core = { path = "../rugeng_core" }
+rugeng_render = { path = "../rugeng_render" }
+rugeng_physics = { path = "../rugeng_physics" }
+rugeng_assets = { path = "../rugeng_assets" }
+winit = { version = "0.30", features = ["rwh_06"] }
+glam = { workspace = true }
+ash = "0.38"

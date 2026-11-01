@@ -1,0 +1,28 @@
+[package]
+name = "rugeng_render"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rugeng_core = { path = "../rugeng_core" }
+ash = { version = "0.38", default-features = true, features = ["linked"] }
+ash-window = "0.13"
+raw-window-handle = "0.6"
+winit = { version = "0.30", default-features = true }
+glam = { workspace = true }
+gpu-allocator = { version = "0.27", default-features = false, features = ["vulkan"] }
+bytemuck = { version = "1.25", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+fontdue = "0.9.5"
+
+[[example]]
+name = "clear_screen"
+path = "examples/clear_screen.rs"
+
+[[example]]
+name = "sprites_50k"
+path = "examples/sprites_50k.rs"
+
+[[bench]]
+name = "render_bench"
+harness = false

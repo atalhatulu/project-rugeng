@@ -1,0 +1,66 @@
+{
+  "name": "EmberMainScene",
+  "version": 1,
+  "entities": [
+    {
+      "id": 1,
+      "name": "PlayerShip",
+      "pos": [0.0, -180.0],
+      "size": [48.0, 48.0],
+      "rotation": 0.0,
+      "color": [255, 255, 255, 255],
+      "texture": "player_ship",
+      "has_collider": true,
+      "velocity": [0.0, 0.0],
+      "script": null
+    },
+    {
+      "id": 2,
+      "name": "AlienBug_Alpha",
+      "pos": [-150.0, 100.0],
+      "size": [36.0, 36.0],
+      "rotation": 0.0,
+      "color": [255, 255, 255, 255],
+      "texture": "enemy_bug",
+      "has_collider": true,
+      "velocity": null,
+      "script": "PatrolScript"
+    },
+    {
+      "id": 3,
+      "name": "AlienBug_Beta",
+      "pos": [150.0, 120.0],
+      "size": [36.0, 36.0],
+      "rotation": 0.0,
+      "color": [255, 255, 255, 255],
+      "texture": "enemy_bug",
+      "has_collider": true,
+      "velocity": null,
+      "script": "PatrolScript"
+    },
+    {
+      "id": 4,
+      "name": "EnergyOrb_Relic",
+      "pos": [-80.0, 0.0],
+      "size": [28.0, 28.0],
+      "rotation": 0.0,
+      "color": [255, 255, 255, 255],
+      "texture": "energy_orb",
+      "has_collider": false,
+      "velocity": null,
+      "script": "RotatorScript"
+    },
+    {
+      "id": 5,
+      "name": "HealthHeart_Pickup",
+      "pos": [80.0, 0.0],
+      "size": [30.0, 30.0],
+      "rotation": 0.0,
+      "color": [255, 255, 255, 255],
+      "texture": "heart_icon",
+      "has_collider": false,
+      "velocity": null,
+      "script": "PulseScript"
+    }
+  ]
+}

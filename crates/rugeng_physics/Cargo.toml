@@ -1,0 +1,16 @@
+[package]
+name = "rugeng_physics"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rugeng_core = { path = "../rugeng_core" }
+glam = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "physics_benchmark"
+harness = false
+

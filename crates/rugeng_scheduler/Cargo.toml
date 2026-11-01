@@ -1,0 +1,17 @@
+[package]
+name = "rugeng_scheduler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rugeng_core = { path = "../rugeng_core" }
+crossbeam-deque = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+loom = "0.7"
+criterion = { workspace = true }
+
+[[bench]]
+name = "scheduler_benchmark"
+harness = false
