@@ -9,7 +9,13 @@ use rugeng_core::{
 use std::path::PathBuf;
 
 impl App {
-    pub(crate) fn handle_mouse_click(&mut self, mouse: Vec2, screen_w: f32, screen_h: f32) {
+    pub(crate) fn handle_mouse_click(
+        &mut self,
+        mouse: Vec2,
+        screen_w: f32,
+        screen_h: f32,
+        double_click: bool,
+    ) {
         let menu_h = 30.0;
         let left_w = 260.0;
         let right_w = 300.0;
@@ -593,6 +599,10 @@ impl App {
             }
             if let Some(e) = clicked_e {
                 self.editor.selected_entity = Some(e);
+                // Çift tıklama (Godot vari): satır içi yeniden adlandırma
+                if double_click {
+                    self.start_rename();
+                }
                 self.editor.logs.push(LogMessage {
                     level: "INFO",
                     text: format!("Dugum #{}:{} secildi.", e.index(), e.generation()),

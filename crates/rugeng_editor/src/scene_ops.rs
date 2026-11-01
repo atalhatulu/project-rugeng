@@ -1010,9 +1010,11 @@ impl App {
     pub(crate) fn start_rename(&mut self) {
         if let Some(e) = self.editor.selected_entity {
             let buf = self.display_name_of(e, false);
+            let caret = buf.chars().count();
             self.editor.renaming = Some(InlineTextEdit {
                 entity: e,
                 buffer: buf,
+                caret,
             });
             self.editor.logs.push(LogMessage {
                 level: "INFO",

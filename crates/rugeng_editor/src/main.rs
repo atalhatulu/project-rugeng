@@ -101,6 +101,10 @@ impl EditorState {
 }
 
 pub(crate) struct App {
+    /// Manuel çift-tıklama algılaması (bu winit derlemesinde MouseEvent kanalı yok):
+    /// son sol-tıklamanın anı ve konumu; 350 ms + 6 px penceresi içindeyse çift tık.
+    pub(crate) last_click_at: Option<std::time::Instant>,
+    pub(crate) last_click_pos: Vec2,
     pub(crate) pipeline_2d: Option<Pipeline2D>,
     pub(crate) pipeline_3d: Option<Pipeline3D>,
     pub(crate) depth_buffer: Option<DepthBuffer>,
@@ -370,6 +374,8 @@ impl App {
         Self {
             window: None,
             context: None,
+            last_click_at: None,
+            last_click_pos: Vec2::ZERO,
             pipeline_2d: None,
             pipeline_3d: None,
             depth_buffer: None,
@@ -412,6 +418,24 @@ impl App {
                 paths.iter().find_map(|p| TrueTypeFont::from_file(p).ok())
             },
         }
+    }
+}
+
+impl App {
+    /// Basılı sol tuş olayında çağrılır: aynı yere 350 ms içinde gelen ikinci tık.
+    /// Bayrağı her zaman günceller; true dönerse pencere sıfırlanır (üçüncü tık tek sayılır).
+    pub(crate) fn is_double_click(&mut self) -> bool {
+        let pos = self.editor.mouse_pos;
+        let dc = self
+            .last_click_at
+            .map(|t| t.elapsed().as_millis() < 350 && pos.distance(self.last_click_pos) < 6.0)
+            .unwrap_or(false);
+        self.last_click_at = Some(std::time::Instant::now());
+        self.last_click_pos = pos;
+        if dc {
+            self.last_click_at = None;
+        }
+        dc
     }
 }
 
@@ -1071,11 +1095,20 @@ impl ApplicationHandler for App {
                         let w_opt = self.window.clone();
                         if let Some(win) = w_opt {
                             let sz = win.inner_size();
+                            let had_rename = self.editor.renaming.is_some();
+                            let dc = self.is_double_click();
                             self.handle_mouse_click(
                                 self.editor.mouse_pos,
                                 sz.width as f32,
                                 sz.height as f32,
+                                dc,
                             );
+                            // Çift tıkla rename başladıysa IME'yi aç (Türkçe giriş)
+                            if !had_rename && self.editor.renaming.is_some() {
+                                if let Some(w) = self.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                            }
                         }
                     } else {
                         // Sürükleme işlemi bittiğinde konum değiştiyse UndoAction::MoveEntity kaydet
@@ -1182,6 +1215,31 @@ impl ApplicationHandler for App {
                             KeyCode::Backspace => {
                                 if let Some(r) = self.editor.renaming.as_mut() {
                                     r.backspace();
+                                }
+                            }
+                            KeyCode::Delete => {
+                                if let Some(r) = self.editor.renaming.as_mut() {
+                                    r.delete_forward();
+                                }
+                            }
+                            KeyCode::ArrowLeft => {
+                                if let Some(r) = self.editor.renaming.as_mut() {
+                                    r.move_caret(-1);
+                                }
+                            }
+                            KeyCode::ArrowRight => {
+                                if let Some(r) = self.editor.renaming.as_mut() {
+                                    r.move_caret(1);
+                                }
+                            }
+                            KeyCode::Home => {
+                                if let Some(r) = self.editor.renaming.as_mut() {
+                                    r.home();
+                                }
+                            }
+                            KeyCode::End => {
+                                if let Some(r) = self.editor.renaming.as_mut() {
+                                    r.end();
                                 }
                             }
                             _ => {
@@ -1993,7 +2051,7 @@ mod tests {
         let sy = vp_canvas_y + (1.0 - (ndc_y * 0.5 + 0.5)) * vp_canvas_h;
 
         // Varlığın ekran projeksiyon noktasına tıkla
-        app.handle_mouse_click(Vec2::new(sx, sy), screen_w, screen_h);
+        app.handle_mouse_click(Vec2::new(sx, sy), screen_w, screen_h, false);
         assert_eq!(
             app.editor.selected_entity,
             Some(e),
@@ -2001,7 +2059,12 @@ mod tests {
         );
 
         // Boş alana tıklandığında seçimin kaldırıldığını doğrula
-        app.handle_mouse_click(Vec2::new(vp_x + 5.0, vp_canvas_y + 5.0), screen_w, screen_h);
+        app.handle_mouse_click(
+            Vec2::new(vp_x + 5.0, vp_canvas_y + 5.0),
+            screen_w,
+            screen_h,
+            false,
+        );
         assert_eq!(
             app.editor.selected_entity, None,
             "Bos alana tiklama 3D varlik secimini kaldirmalidir"
@@ -2167,7 +2230,7 @@ mod tests {
         // Menü tıklaması simülasyonu: Add menüsü x=142, drop_y=30, item_h=24
         // 0. eleman: add_ship (y = 30 + 4 + 12 = 46)
         let initial_count = app.registry.entities::<Transform2D>().len();
-        app.handle_mouse_click(Vec2::new(160.0, 46.0), 1280.0, 720.0);
+        app.handle_mouse_click(Vec2::new(160.0, 46.0), 1280.0, 720.0, false);
 
         assert_eq!(
             app.editor.active_menu, None,
@@ -2197,7 +2260,7 @@ mod tests {
         app.editor.context_menu = Some(ctx.clone());
 
         // Context Menu 0. öğesine sol tık (pos_x=400, pos_y=300, y=312)
-        app.handle_mouse_click(Vec2::new(450.0, 312.0), 1280.0, 720.0);
+        app.handle_mouse_click(Vec2::new(450.0, 312.0), 1280.0, 720.0, false);
         assert!(
             app.editor.context_menu.is_none(),
             "Tiklama sonrasi context menu kapanmali"
@@ -2231,7 +2294,7 @@ mod tests {
             }],
         };
         app.editor.context_menu = Some(ent_ctx);
-        app.handle_mouse_click(Vec2::new(550.0, 312.0), 1280.0, 720.0);
+        app.handle_mouse_click(Vec2::new(550.0, 312.0), 1280.0, 720.0, false);
 
         let z = app.registry.get::<ZIndex2D>(test_e).unwrap().z;
         assert_eq!(z, 1, "Context menu z_up Z-Index'i artirmali");

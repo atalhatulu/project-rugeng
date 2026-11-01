@@ -90,3 +90,12 @@ Durum: 116→121→**131 test yeşil** (+4 panik regresyonu, +1 particle serile�
 - R3 kapandı: `FrameArena::alloc` debug_assert ile Drop-tipi tahsisini debug'da yakalar + doc uyarısı. R4 kapandı: `StorageCell` Send/Sync üstüne scheduler-dışı kullanım yasağı dokümante edildi.
 
 Kalan açık kalemler: ttf-parser değişimi (RUSTSEC-2026-0192), git deposu, inline düzenlemede imleç/caret hareketi (şimdilik sona ekleme + tampon temizleme), ui.rs 4588 satır bölme borcu.
+
+**Dördüncü tur — caret + çift tıkla adlandırma + git:**
+- `InlineTextEdit` v2: karakter-tabanlı `caret`; `insert` imleç konumuna yazar, `backspace` sol-dan siler, `delete_forward` (Delete), `move_caret` (Sol/Sağ, kenetli), `Home`/`End`. Bayt kayması imkânsız (çok baytlık testler var). Ölümsüz-girdi savunması: buffer dışı caret normalize edilir (panic yok).
+- Ağaç satırına **çift tıklama** ile rename: bu winit derlemesinde `MouseEvent`/`double_click` kanalı yok (0.30.13'te `WindowEvent::MouseInput` alan taşımıyor) → manuel algılama `App::is_double_click` (350 ms + 6 px penceresi). Çift tıkta IME otomatik açılır.
+- Editör kısayolları rename modunda tamamen bloklu (Delete artık entity SİLMEZ, metinden karakter siler).
+- **git deposu kuruldu** (`main` dalı; iç içe boş `rugeng_script/.git` iskeleti temizlendi) — ilk commit 68095e6.
+- Durum: **135 test yeşil**, clippy `-D warnings` 0, release smoke ✅ (4000+ FPS).
+
+Kalan: ttf-parser, imleç fare ile konumlandırma, ui.rs bölme, push (remote yok).

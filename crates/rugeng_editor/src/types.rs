@@ -88,26 +88,67 @@ pub enum UndoAction {
 }
 
 /// Satır içi metin düzenleme durumu (F2: düğüm yeniden adlandırma).
-/// Yan etkisiz tutulur; birim testleriyle doğrulanır.
+/// Yan etkisiz tutulur; birim testleriyle doğrulanır. `caret` KAREKTER
+/// cinsindendir (byte değil) — Türkçe/çok baytlık metinlerde kaymaz.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InlineTextEdit {
     pub entity: Entity,
     pub buffer: String,
+    pub caret: usize,
 }
 
 impl InlineTextEdit {
     pub const MAX_LEN: usize = 64;
 
-    /// Yazdırılabilir karakteri ekler; kontrol karakterlerini ve taşmayı reddeder.
+    /// Karakteri imleç konumuna ekler; kontrol karakterlerini ve taşmayı reddeder.
     pub fn insert(&mut self, ch: char) {
         if ch.is_control() || self.buffer.chars().count() >= Self::MAX_LEN {
             return;
         }
-        self.buffer.push(ch);
+        let mut cs: Vec<char> = self.buffer.chars().collect();
+        cs.insert(self.caret.min(cs.len()), ch);
+        self.buffer = cs.into_iter().collect();
+        self.caret += 1;
     }
 
+    /// İmlecin solundaki karakteri siler.
     pub fn backspace(&mut self) -> bool {
-        self.buffer.pop().is_some()
+        let mut cs: Vec<char> = self.buffer.chars().collect();
+        self.caret = self.caret.min(cs.len());
+        if self.caret == 0 {
+            return false;
+        }
+        cs.remove(self.caret - 1);
+        self.buffer = cs.into_iter().collect();
+        self.caret -= 1;
+        true
+    }
+
+    /// İmlecin sağındaki karakteri siler (Delete tuşu).
+    pub fn delete_forward(&mut self) -> bool {
+        let mut cs: Vec<char> = self.buffer.chars().collect();
+        self.caret = self.caret.min(cs.len());
+        if self.caret < cs.len() {
+            cs.remove(self.caret);
+            self.buffer = cs.into_iter().collect();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// İmleci taşır; [0, len] aralığına kenetler.
+    pub fn move_caret(&mut self, delta: i32) {
+        let len = self.buffer.chars().count() as i32;
+        self.caret = (self.caret as i32 + delta).clamp(0, len) as usize;
+    }
+
+    pub fn home(&mut self) {
+        self.caret = 0;
+    }
+
+    pub fn end(&mut self) {
+        self.caret = self.buffer.chars().count();
     }
 }
 
@@ -383,7 +424,52 @@ mod inline_text_edit_tests {
         InlineTextEdit {
             entity: Entity::new(1, 0),
             buffer: seed.to_string(),
+            caret: seed.chars().count(),
         }
+    }
+
+    #[test]
+    fn caret_inserts_in_middle_and_shifts_right() {
+        let mut e = edit("abc");
+        e.home();
+        e.move_caret(1); // "a|bc"
+        e.insert('ğ');
+        assert_eq!(e.buffer, "ağbc");
+        assert_eq!(e.caret, 2);
+    }
+
+    #[test]
+    fn backspace_at_home_is_noop_delete_forward_eats_right() {
+        let mut e = edit("abc");
+        e.home();
+        assert!(!e.backspace());
+        assert_eq!(e.buffer, "abc");
+        assert!(e.delete_forward());
+        assert_eq!(e.buffer, "bc");
+        e.end();
+        assert!(!e.delete_forward());
+    }
+
+    #[test]
+    fn caret_clamps_at_both_ends_on_multibyte_buffer() {
+        let mut e = edit("şğı"); // 3 karakter, 6 bayt
+        e.move_caret(-99);
+        assert_eq!(e.caret, 0);
+        e.move_caret(99);
+        assert_eq!(e.caret, 3);
+        e.move_caret(-1); // caret 2 → 'ğ' silinecek
+        assert!(e.backspace());
+        assert_eq!(e.buffer, "şı");
+        assert_eq!(e.caret, 1);
+    }
+
+    #[test]
+    fn delete_forward_on_multibyte_is_boundary_safe() {
+        let mut e = edit("aşı");
+        e.home();
+        e.move_caret(1);
+        assert!(e.delete_forward()); // 'ş' 2 bayt — byte dilimlemede patlardı
+        assert_eq!(e.buffer, "aı");
     }
 
     #[test]
@@ -419,7 +505,7 @@ mod inline_text_edit_tests {
         let mut e = edit("abc");
         assert!(e.backspace());
         assert_eq!(e.buffer, "ab");
-        e.buffer.clear();
+        e.buffer.clear(); // stale caret 2 kalır — panik değil no-op olmalı
         assert!(!e.backspace());
         assert!(e.buffer.is_empty());
     }

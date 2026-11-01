@@ -1856,13 +1856,12 @@ impl App {
                 .map(|r| r.entity == e)
                 .unwrap_or(false);
             let label = if editing_here {
-                let buf = self
-                    .editor
-                    .renaming
-                    .as_ref()
-                    .map(|r| r.buffer.as_str())
-                    .unwrap_or("");
-                format!("{}▏", buf)
+                let r = self.editor.renaming.as_ref().unwrap();
+                let cs: Vec<char> = r.buffer.chars().collect();
+                let pos = r.caret.min(cs.len());
+                let head: String = cs[..pos].iter().collect();
+                let tail: String = cs[pos..].iter().collect();
+                format!("{}▏{}", head, tail)
             } else if let Some(n) = self.registry.get::<NodeName>(e) {
                 format!("{}_{}", node_prefix, n.name)
             } else {
