@@ -2,7 +2,7 @@ use crate::types::*;
 use crate::App;
 use glam::Vec2;
 use rugeng_core::{
-    Animation2DComponent, AnimationClip, Collider2D, Entity, Mesh3DComponent,
+    Animation2DComponent, AnimationClip, Collider2D, Entity, Mesh3DComponent, Parent,
     ParticleEmitterComponent, ScriptComponent, SpriteColor, SpriteTexture, Text2DComponent,
     TileType, Tilemap2DComponent, Transform2D, Transform3D, Velocity2D, ZIndex2D,
 };
@@ -631,10 +631,38 @@ impl App {
                 row_y += 24.0;
             }
             if let Some(e) = clicked_e {
+                let was_renaming_same = self
+                    .editor
+                    .renaming
+                    .as_ref()
+                    .map(|r| r.entity == e)
+                    .unwrap_or(false);
+
+                if was_renaming_same && !double_click {
+                    // Zaten yeniden adlandırma modunda olan aynı düğüme tıklandıysa imleci tıklandığı yere taşı
+                    let has_parent = self.registry.has::<Parent>(e);
+                    let indent = if has_parent { 14.0 } else { 0.0 };
+                    let text_start_x = 28.0 + indent;
+                    let local_x = mouse.x - text_start_x;
+                    if let Some(r) = self.editor.renaming.as_mut() {
+                        r.set_caret_from_click_x(local_x, 1.2);
+                    }
+                    return;
+                }
+
                 self.editor.selected_entity = Some(e);
                 // Çift tıklama (Godot vari): satır içi yeniden adlandırma
                 if double_click {
                     self.start_rename();
+                } else if self
+                    .editor
+                    .renaming
+                    .as_ref()
+                    .map(|r| r.entity != e)
+                    .unwrap_or(false)
+                {
+                    // Farklı bir düğüme tıklandıysa önceki yeniden adlandırmayı onayla/kapat
+                    self.commit_rename();
                 }
                 self.editor.logs.push(LogMessage {
                     level: "INFO",

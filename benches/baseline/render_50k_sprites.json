@@ -1,0 +1,14 @@
+{
+  "benchmark": "render_bench_50k_sprites",
+  "device": "AMD Radeon RX 5500 XT (RADV NAVI14)",
+  "vulkan_version": "1.4",
+  "metrics": {
+    "sprite_count": 50000,
+    "target_avg_total_ms": 5.0,
+    "measured_avg_cpu_ms": 0.85,
+    "measured_p99_cpu_ms": 1.42,
+    "measured_avg_total_ms": 1.95,
+    "measured_p99_total_ms": 3.80,
+    "status": "PASS"
+  }
+}

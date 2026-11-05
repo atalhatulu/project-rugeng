@@ -1,3 +1,6 @@
 /target
 *.log
 scenes/*.scene.bak
+*.spv
+!crates/rugeng_render/shaders/*.spv
+

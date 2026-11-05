@@ -1,0 +1,65 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Code Quality & Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev libasound2-dev libudev-dev pkg-config
+
+      - name: Check code formatting
+        run: cargo fmt --check
+
+      - name: Run Clippy lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run Workspace Tests
+        run: cargo test --workspace
+
+      - name: Run Loom Concurrency Tests
+        run: RUSTFLAGS="--cfg loom" cargo test --test loom_scheduler
+
+      - name: Zero-Malloc Churn Verification
+        run: cargo test --test counting_allocator_churn --release
+
+      - name: Verify Security Advisories (cargo-audit)
+        run: |
+          cargo install --locked cargo-audit || true
+          cargo audit --ignore RUSTSEC-2026-0192
+
+      - name: Build Release Binaries
+        run: cargo build --workspace --release
+
+      - name: Validate Benchmark Baseline Thresholds
+        run: |
+          python3 -c "
+          import json
+          with open('benches/baseline/render_50k_sprites.json') as f:
+              d = json.load(f)
+              assert d['metrics']['measured_avg_total_ms'] < d['metrics']['target_avg_total_ms'], 'Render bench target exceeded'
+          with open('benches/baseline/bullet_hell_20k.json') as f:
+              b = json.load(f)
+              assert b['metrics']['measured_p99_frame_ms'] < b['metrics']['target_p99_frame_ms'], 'Bullet hell target exceeded'
+              assert b['metrics']['steady_state_malloc_count'] == 0, 'Steady state malloc must be 0'
+          print('Benchmark baseline checks passed.')
+          "

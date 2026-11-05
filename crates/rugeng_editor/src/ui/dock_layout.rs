@@ -111,3 +111,26 @@ impl DockLayout {
             && pos.x <= self.insp_x
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dock_layout_custom_sizes_clamping() {
+        // Çok küçük değerler girildiğinde min sınırlarına clamp etmeli
+        let layout_min = DockLayout::with_custom_sizes(1280.0, 720.0, 10.0, 20.0, 15.0);
+        assert_eq!(layout_min.left_w, 160.0);
+        assert_eq!(layout_min.right_w, 180.0);
+        assert_eq!(layout_min.bottom_h, 80.0);
+
+        // Ekran boyutunu aşan aşırı büyük değerlerde maksimum sınırlarına clamp etmeli
+        let layout_max = DockLayout::with_custom_sizes(1000.0, 600.0, 900.0, 900.0, 800.0);
+        assert_eq!(layout_max.left_w, 1000.0 * 0.45);
+        assert_eq!(layout_max.right_w, 1000.0 * 0.45);
+        assert_eq!(layout_max.bottom_h, 600.0 * 0.5);
+
+        // Viewport genişliği pozitif kalmalı
+        assert!(layout_max.vp_w >= 100.0);
+    }
+}

@@ -151,6 +151,21 @@ impl InlineTextEdit {
     pub fn end(&mut self) {
         self.caret = self.buffer.chars().count();
     }
+
+    /// Verilen yerel X piksel ofsetine göre imleç konumunu ayarlar.
+    /// 5x7 bitmap font standart ölçeği (1.2) ve karakter aralığı (2.0) üzerinden
+    /// her glifin ortasına göre en yakın karakter sınırını güvenle bulur.
+    pub fn set_caret_from_click_x(&mut self, local_click_x: f32, scale: f32) {
+        if local_click_x <= 0.0 {
+            self.caret = 0;
+            return;
+        }
+        let char_step = (5.0 + 2.0) * scale;
+        let char_count = self.buffer.chars().count();
+        // En yakın karakter sınırına yuvarla
+        let idx = ((local_click_x + (char_step * 0.5)) / char_step) as usize;
+        self.caret = idx.min(char_count);
+    }
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -528,5 +543,31 @@ mod inline_text_edit_tests {
         let mut e = edit("şa");
         assert!(e.backspace());
         assert_eq!(e.buffer, "ş"); // byte dilimleme olsa paniklerdi
+    }
+
+    #[test]
+    fn mouse_click_caret_positioning_and_bounds() {
+        let mut e = edit("Oyuncu_1"); // 8 karakter
+        let scale = 1.2;
+        let char_step = (5.0 + 2.0) * scale; // 8.4 px
+
+        // Sol kenara / negatif alana tıklama -> 0
+        e.set_caret_from_click_x(-10.0, scale);
+        assert_eq!(e.caret, 0);
+
+        e.set_caret_from_click_x(0.0, scale);
+        assert_eq!(e.caret, 0);
+
+        // İlk karakterin ortası civarı -> 1
+        e.set_caret_from_click_x(char_step * 0.9, scale);
+        assert_eq!(e.caret, 1);
+
+        // 4. karakter civarı -> 4
+        e.set_caret_from_click_x(char_step * 3.8, scale);
+        assert_eq!(e.caret, 4);
+
+        // Metin sonunun çok ötesine tıklama -> son karakter (8) ile sınırlandırılmalı
+        e.set_caret_from_click_x(char_step * 50.0, scale);
+        assert_eq!(e.caret, 8);
     }
 }

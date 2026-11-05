@@ -13,7 +13,7 @@ glam = { workspace = true }
 gpu-allocator = { version = "0.27", default-features = false, features = ["vulkan"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
-fontdue = "0.9.5"
+swash = "0.1"
 
 [[example]]
 name = "clear_screen"

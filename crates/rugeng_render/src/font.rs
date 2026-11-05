@@ -495,16 +495,24 @@ pub fn draw_text(
     draw_text_spaced(instances, text, start_x, start_y, scale, 2.0, color);
 }
 
-/// fontdue ile ttf/otf dosyalarından doğrudan rasterize edilmiş dinamik TrueType font yapısı.
+/// swash ile ttf/otf dosyalarından doğrudan rasterize edilmiş dinamik TrueType font yapısı.
 pub struct TrueTypeFont {
-    font: fontdue::Font,
+    data: Vec<u8>,
+    offset: u32,
+    key: swash::CacheKey,
 }
 
 impl TrueTypeFont {
     /// Ham TTF bayt dizisinden font nesnesi yükler.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
-        let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())?;
-        Ok(Self { font })
+        let font_ref = swash::FontRef::from_index(bytes, 0).ok_or("Gecersiz font verisi")?;
+        let offset = font_ref.offset;
+        let key = font_ref.key;
+        Ok(Self {
+            data: bytes.to_vec(),
+            offset,
+            key,
+        })
     }
 
     /// Disk üzerindeki TTF/OTF dosya yolundan font nesnesi yükler.
@@ -513,15 +521,31 @@ impl TrueTypeFont {
         Self::from_bytes(&bytes).map_err(|e| format!("Font cozumlenemedi: {e}"))
     }
 
+    /// Dahili `FontRef` referansını döndürür.
+    #[inline]
+    fn as_ref(&self) -> swash::FontRef<'_> {
+        swash::FontRef {
+            data: &self.data,
+            offset: self.offset,
+            key: self.key,
+        }
+    }
+
     /// Verilen metnin genişliğini (piksel cinsinden) hesaplar.
     pub fn measure_text(&self, text: &str, px_size: f32) -> f32 {
+        let font_ref = self.as_ref();
+        let charmap = font_ref.charmap();
+        let glyph_metrics = font_ref.glyph_metrics(&[]).scale(px_size);
+
         let mut total_w = 0.0f32;
         for ch in text.chars() {
             if ch == ' ' {
-                total_w += px_size * 0.32;
+                let gid = charmap.map(' ');
+                let adv = glyph_metrics.advance_width(gid);
+                total_w += if adv > 0.0 { adv } else { px_size * 0.32 };
             } else {
-                let metrics = self.font.metrics(ch, px_size);
-                total_w += metrics.advance_width;
+                let gid = charmap.map(ch);
+                total_w += glyph_metrics.advance_width(gid);
             }
         }
         total_w
@@ -538,6 +562,26 @@ impl TrueTypeFont {
         px_size: f32,
         color: [u8; 4],
     ) {
+        let font_ref = self.as_ref();
+        let charmap = font_ref.charmap();
+        let metrics = font_ref.metrics(&[]);
+        let glyph_metrics = font_ref.glyph_metrics(&[]).scale(px_size);
+
+        // Metrik ölçek faktörü (unitsPerEm -> px)
+        let upem = metrics.units_per_em.max(1) as f32;
+        let scale = px_size / upem;
+        let ascent = metrics.ascent * scale;
+
+        let mut context = swash::scale::ScaleContext::new();
+        let mut scaler = context.builder(font_ref).size(px_size).hint(true).build();
+
+        let mut render = swash::scale::Render::new(&[
+            swash::scale::Source::ColorOutline(0),
+            swash::scale::Source::ColorBitmap(swash::scale::StrikeWith::BestFit),
+            swash::scale::Source::Outline,
+        ]);
+        render.format(swash::zeno::Format::Alpha);
+
         let mut cursor_x = start_x;
         let line_height = px_size * 1.25;
         let mut cursor_y = start_y;
@@ -551,40 +595,48 @@ impl TrueTypeFont {
             if ch == '\r' {
                 continue;
             }
+
+            let gid = charmap.map(ch);
+            let adv = glyph_metrics.advance_width(gid);
+
             if ch == ' ' {
-                cursor_x += (px_size * 0.32).round().max(4.0);
+                let space_adv = if adv > 0.0 { adv } else { px_size * 0.32 };
+                cursor_x += space_adv.round().max(4.0);
                 continue;
             }
 
-            let (metrics, bitmap) = self.font.rasterize(ch, px_size);
-            if metrics.width > 0 && metrics.height > 0 {
-                let glyph_x = cursor_x + metrics.xmin as f32;
-                // Fontdue ymin yukarı doğru koordinattır, baseline hizalaması:
-                let glyph_y =
-                    cursor_y + (px_size * 0.8) - (metrics.height as f32 + metrics.ymin as f32);
+            if let Some(image) = render.render(&mut scaler, gid) {
+                if image.placement.width > 0 && image.placement.height > 0 {
+                    let glyph_x = cursor_x + image.placement.left as f32;
+                    // swash placement.top, baseline'dan yukarı doğru piksel mesafesidir.
+                    // Üst köşe: baseline_y - placement.top
+                    let baseline_y = cursor_y + ascent;
+                    let glyph_y = baseline_y - image.placement.top as f32;
 
-                for r in 0..metrics.height {
-                    for c in 0..metrics.width {
-                        let coverage = bitmap[r * metrics.width + c];
-                        if coverage >= 64 {
-                            let mut px_col = color;
-                            let alpha_factor = coverage as f32 / 255.0;
-                            px_col[3] = ((color[3] as f32) * alpha_factor).round() as u8;
-                            instances.push(QuadInstance::new(
-                                [glyph_x + c as f32, glyph_y + r as f32],
-                                [1.0, 1.0],
-                                px_col,
-                                0,
-                            ));
+                    let w = image.placement.width as usize;
+                    let h = image.placement.height as usize;
+
+                    for r in 0..h {
+                        for c in 0..w {
+                            let coverage = image.data[r * w + c];
+                            if coverage >= 64 {
+                                let mut px_col = color;
+                                let alpha_factor = coverage as f32 / 255.0;
+                                px_col[3] = ((color[3] as f32) * alpha_factor).round() as u8;
+                                instances.push(QuadInstance::new(
+                                    [glyph_x + c as f32, glyph_y + r as f32],
+                                    [1.0, 1.0],
+                                    px_col,
+                                    0,
+                                ));
+                            }
                         }
                     }
                 }
             }
 
-            cursor_x += metrics
-                .advance_width
-                .round()
-                .max(metrics.width as f32 + 1.0);
+            let advance = if adv > 0.0 { adv } else { px_size * 0.5 };
+            cursor_x += advance.round().max(1.0);
         }
     }
 }
@@ -724,6 +776,21 @@ mod tests {
         assert!(
             !instances.is_empty(),
             "TrueType font quad instance uretmeli"
+        );
+    }
+
+    #[test]
+    fn test_truetype_font_measure_precision() {
+        let font_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/fonts/Roboto-Regular.ttf"
+        );
+        let font = TrueTypeFont::from_file(font_path).expect("Roboto-Regular.ttf yuklenebilmeli");
+        let w = font.measure_text("Project Rugeng", 16.0);
+        // "Project Rugeng" at 16px in Roboto-Regular via swash glyph metrics: 108.42px
+        assert!(
+            (w - 108.42).abs() < 0.5,
+            "Genişlik ölçümü beklenen değerle uyumlu olmalı, elde edilen {w}px"
         );
     }
 }

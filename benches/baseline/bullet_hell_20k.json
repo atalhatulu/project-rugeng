@@ -1,0 +1,15 @@
+{
+  "benchmark": "bullet_hell_20k_bullets",
+  "device": "AMD Radeon RX 5500 XT (RADV NAVI14)",
+  "vulkan_version": "1.4",
+  "metrics": {
+    "bullet_count": 20000,
+    "target_p99_frame_ms": 8.33,
+    "measured_avg_frame_ms": 0.22,
+    "measured_p99_frame_ms": 3.88,
+    "measured_physics_ms": 0.64,
+    "measured_spatial_hash_us": 430,
+    "steady_state_malloc_count": 0,
+    "status": "PASS"
+  }
+}

@@ -2818,4 +2818,54 @@ mod tests {
 
         let _ = std::fs::remove_file(prefab_path);
     }
+
+    #[test]
+    fn test_mouse_click_caret_positioning_during_rename() {
+        let mut app = App::new();
+        // İlk varlığı al (App::new sahnesindeki ilk varlık)
+        let first_ent = {
+            let mut ents = Vec::new();
+            app.registry
+                .view1_ref::<rugeng_core::Transform2D, _>(|e, _t| ents.push(e));
+            ents[0]
+        };
+        app.editor.selected_entity = Some(first_ent);
+        app.registry
+            .emplace(first_ent, NodeName::new("PlayerShip".to_string()));
+
+        // F2 rename modunu başlat
+        app.start_rename();
+        assert!(app.editor.renaming.is_some());
+        let ren = app.editor.renaming.as_ref().unwrap();
+        assert_eq!(ren.buffer, "PlayerShip");
+        assert_eq!(ren.caret, "PlayerShip".chars().count()); // Başlangıçta sonda (10)
+
+        // Ağaç satırının dikey koordinatını hesapla (ilk düğüm)
+        let filter_y = 30.0 + 26.0;
+        let root_y = filter_y + 26.0;
+        let b1_y = root_y + 16.0;
+        let b5_y = b1_y + (24.0 * 4.0);
+        let act_bar_y = b5_y + 24.0;
+        let row_y = act_bar_y + 26.0;
+
+        // Metin başlangıcı (28.0 px) üzerine tıklama -> caret 0 olmalı
+        app.handle_mouse_click(glam::Vec2::new(28.0, row_y + 10.0), 1280.0, 720.0, false);
+        assert!(app.editor.renaming.is_some());
+        assert_eq!(app.editor.renaming.as_ref().unwrap().caret, 0);
+
+        // Yaklaşık 4. karakter (Player|Ship) koordinatına tıklama -> caret ~4 olmalı
+        let char_step = (5.0 + 2.0) * 1.2; // 8.4 px
+        let target_x = 28.0 + (char_step * 4.0);
+        app.handle_mouse_click(
+            glam::Vec2::new(target_x, row_y + 10.0),
+            1280.0,
+            720.0,
+            false,
+        );
+        assert_eq!(app.editor.renaming.as_ref().unwrap().caret, 4);
+
+        // Metnin çok sağına tıklama -> metin uzunluğuna (10) kenetlenmeli
+        app.handle_mouse_click(glam::Vec2::new(200.0, row_y + 10.0), 1280.0, 720.0, false);
+        assert_eq!(app.editor.renaming.as_ref().unwrap().caret, 10);
+    }
 }
