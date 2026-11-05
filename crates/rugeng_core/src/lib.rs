@@ -12,6 +12,7 @@ pub mod input;
 pub mod particle;
 pub mod registry;
 pub mod scene;
+pub mod prefab;
 pub mod script;
 pub mod sparse_set;
 pub mod tilemap;
@@ -20,7 +21,10 @@ pub mod types;
 
 pub use animation::{Animation2DComponent, AnimationClip, AnimationStateMachine, StateTransition};
 pub use arena::{FrameArena, ScopedScratch, DEFAULT_ARENA_CAPACITY};
-pub use audio::{AudioBus, AudioEngine, SfxPreset, SoundClip};
+pub use audio::{
+    AudioBus, AudioEngine, AudioMixer, AudioRingBuffer, AudioStreamDriver, AudioVoice, SfxPreset,
+    SoundClip,
+};
 pub use command_buffer::CommandBuffer;
 pub use components::{
     ButtonState, Collider2D, Mesh3DComponent, NodeName, SpriteColor, SpriteTexture,
@@ -29,6 +33,7 @@ pub use components::{
 pub use hierarchy::{compute_world_transform, Children, Parent};
 pub use input::{ActionInput, ActionMap};
 pub use particle::{interpolate_particle_color, Particle, ParticleEmitterComponent};
+pub use prefab::Prefab;
 pub use registry::{AccessSet, AccessType, AnyStorage, Registry, StorageCell};
 pub use scene::{SceneData, SceneEntity};
 pub use script::{ScriptBehavior, ScriptComponent};

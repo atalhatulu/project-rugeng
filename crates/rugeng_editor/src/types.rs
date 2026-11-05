@@ -1,6 +1,6 @@
 use glam::{Vec2, Vec3};
 use rugeng_core::{
-    Animation2DComponent, Children, Collider2D, Entity, Mesh3DComponent, Parent,
+    Animation2DComponent, Children, Collider2D, Entity, Mesh3DComponent, NodeName, Parent,
     ParticleEmitterComponent, ScriptComponent, SpriteColor, SpriteTexture, Text2DComponent,
     TileData, TileType, Tilemap2DComponent, Transform2D, Transform3D, Velocity2D, ZIndex2D,
 };
@@ -8,6 +8,7 @@ use rugeng_core::{
 #[derive(Clone, Debug)]
 pub struct EntitySnapshot {
     pub entity: Entity,
+    pub name: Option<NodeName>,
     pub transform: Transform2D,
     pub color: Option<SpriteColor>,
     pub texture: Option<SpriteTexture>,

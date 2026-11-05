@@ -20,10 +20,15 @@ pub struct SpawnBulletCmd {
 }
 
 /// Script tarafından üretilen yapısal komutlar
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ScriptCommand {
     SpawnBullet(SpawnBulletCmd),
     Destroy(Entity),
+    PlaySound {
+        name: String,
+        bus: rugeng_core::AudioBus,
+        volume: f32,
+    },
 }
 
 /// Lua ortamına doğrudan sunulan toplu komut tamponu
@@ -53,6 +58,15 @@ impl ScriptCommandBuffer {
     #[inline]
     pub fn push_destroy(&mut self, entity: Entity) {
         self.commands.push(ScriptCommand::Destroy(entity));
+    }
+
+    #[inline]
+    pub fn push_play_sound(&mut self, name: impl Into<String>, bus: rugeng_core::AudioBus, volume: f32) {
+        self.commands.push(ScriptCommand::PlaySound {
+            name: name.into(),
+            bus,
+            volume: volume.clamp(0.0, 1.0),
+        });
     }
 
     #[inline]
@@ -90,6 +104,29 @@ impl ScriptCommandBuffer {
                 ScriptCommand::Destroy(e) => {
                     core_cmd.destroy(e);
                 }
+                ScriptCommand::PlaySound { .. } => {}
+            }
+        }
+    }
+
+    /// Tampondaki komutları ses motoru (AudioEngine) ile birlikte uygular.
+    pub fn apply_to_core_and_audio(
+        &mut self,
+        core_cmd: &mut CommandBuffer,
+        audio: &mut rugeng_core::AudioEngine,
+        mut spawn_bullet_fn: impl FnMut(SpawnBulletCmd),
+    ) {
+        for cmd in self.commands.drain(..) {
+            match cmd {
+                ScriptCommand::SpawnBullet(b) => {
+                    spawn_bullet_fn(b);
+                }
+                ScriptCommand::Destroy(e) => {
+                    core_cmd.destroy(e);
+                }
+                ScriptCommand::PlaySound { name, bus, volume } => {
+                    audio.play_on_bus_with_volume(&name, bus, volume);
+                }
             }
         }
     }
@@ -116,6 +153,20 @@ impl UserData for ScriptCommandBuffer {
             this.push_destroy(Entity::from_bits(entity_bits));
             Ok(())
         });
+
+        methods.add_method_mut(
+            "play_sound",
+            |_lua, this, (sound_name, bus_str, volume): (String, Option<String>, Option<f32>)| {
+                let bus = match bus_str.as_deref() {
+                    Some("music") | Some("Music") => rugeng_core::AudioBus::Music,
+                    Some("master") | Some("Master") => rugeng_core::AudioBus::Master,
+                    _ => rugeng_core::AudioBus::Sfx,
+                };
+                let vol = volume.unwrap_or(1.0);
+                this.push_play_sound(sound_name, bus, vol);
+                Ok(())
+            },
+        );
 
         methods.add_method("len", |_lua, this, ()| Ok(this.len()));
         methods.add_method_mut("clear", |_lua, this, ()| {
@@ -153,5 +204,21 @@ mod tests {
         assert_eq!(buffer.len(), 0);
         assert_eq!(spawned.len(), 1);
         assert_eq!(spawned[0].x, 10.0);
+    }
+
+    #[test]
+    fn test_script_command_buffer_audio_integration() {
+        let mut buffer = ScriptCommandBuffer::new();
+        buffer.push_play_sound("sfx_blip", rugeng_core::AudioBus::Sfx, 0.9);
+        assert_eq!(buffer.len(), 1);
+
+        let mut core_cmd = CommandBuffer::new();
+        let mut audio = rugeng_core::AudioEngine::new();
+
+        buffer.apply_to_core_and_audio(&mut core_cmd, &mut audio, |_| {});
+        assert_eq!(buffer.len(), 0);
+        assert_eq!(audio.last_played_sound, "sfx_blip");
+        assert_eq!(audio.active_voices, 1);
+        assert_eq!(audio.mixer.voices[0].volume, 0.9);
     }
 }

@@ -2,9 +2,9 @@ use crate::types::*;
 use crate::App;
 use glam::Vec2;
 use rugeng_core::{
-    Animation2DComponent, AnimationClip, Collider2D, Entity, Mesh3DComponent, ScriptComponent,
-    SpriteColor, SpriteTexture, Text2DComponent, TileType, Tilemap2DComponent, Transform2D,
-    Transform3D, Velocity2D, ZIndex2D,
+    Animation2DComponent, AnimationClip, Collider2D, Entity, Mesh3DComponent,
+    ParticleEmitterComponent, ScriptComponent, SpriteColor, SpriteTexture, Text2DComponent,
+    TileType, Tilemap2DComponent, Transform2D, Transform3D, Velocity2D, ZIndex2D,
 };
 use std::path::PathBuf;
 
@@ -57,6 +57,13 @@ impl App {
                     let action = ctx_menu.items[idx].action_id.clone();
                     match action.as_str() {
                         "duplicate" => self.duplicate_selected_entity(),
+                        "save_prefab" => {
+                            if let Some(e) = ctx_menu.target_entity {
+                                let name = self.display_name_of(e, false);
+                                let path = format!("{}.prefab", name);
+                                let _ = self.save_selected_as_prefab(&path);
+                            }
+                        }
                         "delete" => self.delete_selected_entity(),
                         "z_up" => {
                             if let Some(e) = ctx_menu.target_entity {
@@ -126,7 +133,7 @@ impl App {
                         ("[<] Geri Al", "Ctrl+Z", "undo"),
                         ("[>] Yinele", "Ctrl+Y", "redo"),
                         ("[-] Ayirici", "", ""),
-                        ("[D] Varligi Cogalt", "Ctrl+C", "duplicate"),
+                        ("[D] Varligi Cogalt", "Ctrl+D", "duplicate"),
                         ("[X] Varligi Sil", "Del", "delete"),
                         ("[A] Tumunu Sec", "", "select_all"),
                     ],
@@ -684,6 +691,9 @@ impl App {
                     if item.name.ends_with(".scene") {
                         let path = self.editor.current_path.join(&item.name);
                         self.load_scene_from_file(&path.to_string_lossy());
+                    } else if item.name.ends_with(".prefab") {
+                        let path = self.editor.current_path.join(&item.name);
+                        let _ = self.load_prefab_to_scene(&path.to_string_lossy());
                     } else {
                         self.editor.logs.push(LogMessage {
                             level: "INFO",
@@ -1891,6 +1901,56 @@ impl App {
                     cur_insp_y += 104.0 + 8.0;
                 }
 
+                // BİLEŞEN 8: Parçacık Yayıcı (ParticleEmitterComponent) Kartı Tıklamaları
+                if self.registry.has::<ParticleEmitterComponent>(e) {
+                    let p_y = cur_insp_y;
+                    if mouse.x >= insp_x + 8.0 && mouse.x <= insp_x + right_w - 8.0 {
+                        // [Patlat (Burst)] Butonu
+                        if mouse.x >= insp_x + 14.0
+                            && mouse.x <= insp_x + 124.0
+                            && mouse.y >= p_y + 48.0
+                            && mouse.y <= p_y + 68.0
+                        {
+                            let pos = self
+                                .registry
+                                .get::<Transform2D>(e)
+                                .map(|t| t.pos)
+                                .unwrap_or(Vec2::ZERO);
+                            if let Some(p) = self.registry.get_mut::<ParticleEmitterComponent>(e) {
+                                p.burst(20, pos);
+                                self.audio.play("sfx_laser");
+                                self.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!("Dugum #{}:{} icin parcacik patlatildi.", e.index(), e.generation()),
+                                });
+                            }
+                            return;
+                        }
+                        // [Baslat / Durdur] Butonu
+                        if mouse.x >= insp_x + 130.0
+                            && mouse.x <= insp_x + 240.0
+                            && mouse.y >= p_y + 48.0
+                            && mouse.y <= p_y + 68.0
+                        {
+                            if let Some(p) = self.registry.get_mut::<ParticleEmitterComponent>(e) {
+                                p.is_active = !p.is_active;
+                                self.audio.play("sfx_blip");
+                                self.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!(
+                                        "Dugum #{}:{} parcacik durumu: {}.",
+                                        e.index(),
+                                        e.generation(),
+                                        if p.is_active { "Aktif" } else { "Durduruldu" }
+                                    ),
+                                });
+                            }
+                            return;
+                        }
+                    }
+                    cur_insp_y += 76.0 + 8.0;
+                }
+
                 // [+ Add Component] Butonu
                 let add_btn_y = cur_insp_y;
                 if mouse.x >= insp_x + 8.0
@@ -1997,6 +2057,36 @@ impl App {
                                 level: "INFO",
                                 text: format!(
                                     "Dugum #{}:{} icin Tilemap2DComponent eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            self.editor.show_add_component_popup = false;
+                            self.audio.play("sfx_blip");
+                        } else if mouse.y >= pop_y + 136.0 && mouse.y <= pop_y + 156.0 {
+                            let pos = self
+                                .registry
+                                .get::<Transform2D>(e)
+                                .map(|t| t.pos)
+                                .unwrap_or(Vec2::ZERO);
+                            self.registry
+                                .emplace(e, ParticleEmitterComponent::new_explosion(64, pos));
+                            self.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin ParticleEmitterComponent (Patlama) eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            self.editor.show_add_component_popup = false;
+                            self.audio.play("sfx_blip");
+                        } else if mouse.y >= pop_y + 158.0 && mouse.y <= pop_y + 178.0 {
+                            self.registry.emplace(e, ZIndex2D::new(1));
+                            self.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin ZIndex2D (Katman 1) eklendi.",
                                     e.index(),
                                     e.generation()
                                 ),

@@ -79,6 +79,7 @@ pub(crate) struct EditorState {
     pub(crate) context_menu: Option<ContextMenu>,
     pub(crate) right_click_start: Option<Vec2>,
     pub(crate) right_click_down: bool,
+    pub(crate) is_ctrl_pressed: bool,
 }
 
 impl EditorState {
@@ -244,6 +245,7 @@ impl App {
             context_menu: None,
             right_click_start: None,
             right_click_down: false,
+            is_ctrl_pressed: false,
         };
 
         editor.refresh_files();
@@ -948,8 +950,13 @@ impl ApplicationHandler for App {
                                                 vec![
                                                     ContextMenuItem {
                                                         label: "[D] Varligi Cogalt".to_string(),
-                                                        shortcut: "Ctrl+C".to_string(),
+                                                        shortcut: "Ctrl+D".to_string(),
                                                         action_id: "duplicate".to_string(),
+                                                    },
+                                                    ContextMenuItem {
+                                                        label: "[P] Prefab Olarak Kaydet".to_string(),
+                                                        shortcut: "".to_string(),
+                                                        action_id: "save_prefab".to_string(),
                                                     },
                                                     ContextMenuItem {
                                                         label: "[X] Varligi Sil".to_string(),
@@ -1276,6 +1283,11 @@ impl ApplicationHandler for App {
                     self.action_map.update_key_event(scancode, pressed);
                 }
 
+                // Control tuşu durumunu takip et
+                if matches!(key, KeyCode::ControlLeft | KeyCode::ControlRight) {
+                    self.editor.is_ctrl_pressed = pressed;
+                }
+
                 // 3D Modunda Shift tuşuna basılı tutulduğunda turbo hızı ayarla
                 if matches!(key, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
                     self.editor.camera_3d.is_turbo = pressed;
@@ -1289,6 +1301,39 @@ impl ApplicationHandler for App {
                 if self.editor.workspace == WorkspaceMode::ThreeD && self.editor.camera_3d.is_flying
                 {
                     return;
+                }
+
+                // Ctrl kısayolları öncelikli
+                if self.editor.is_ctrl_pressed {
+                    match key {
+                        KeyCode::KeyD | KeyCode::KeyC => {
+                            self.duplicate_selected_entity();
+                            return;
+                        }
+                        KeyCode::KeyZ => {
+                            self.undo();
+                            return;
+                        }
+                        KeyCode::KeyY => {
+                            self.redo();
+                            return;
+                        }
+                        KeyCode::KeyT => {
+                            self.new_scene();
+                            return;
+                        }
+                        KeyCode::KeyK => {
+                            let path = self.editor.current_scene_path.clone();
+                            self.save_current_scene(&path);
+                            return;
+                        }
+                        KeyCode::KeyL => {
+                            let path = self.editor.current_scene_path.clone();
+                            self.load_scene_from_file(&path);
+                            return;
+                        }
+                        _ => {}
+                    }
                 }
 
                 match key {
@@ -1364,7 +1409,7 @@ impl ApplicationHandler for App {
                     KeyCode::KeyZ => self.undo(),
                     KeyCode::KeyY => self.redo(),
                     KeyCode::KeyT => self.new_scene(),
-                    KeyCode::KeyC => self.duplicate_selected_entity(),
+                    KeyCode::KeyD | KeyCode::KeyC => self.duplicate_selected_entity(),
                     KeyCode::KeyK => {
                         let path = self.editor.current_scene_path.clone();
                         self.save_current_scene(&path);
@@ -2412,5 +2457,76 @@ mod tests {
         app.load_scene_from_file(path);
         app.undo(); // ölü entity'ye dokunan kol — guard olmasa emplace assert'le patlardı
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_duplicate_selected_entity_with_offset_and_undo_redo() {
+        let mut app = App::new();
+        app.spawn_preset_entity("ship");
+        let orig_e = {
+            let mut ents = Vec::new();
+            app.registry
+                .view1_ref::<rugeng_core::Transform2D, _>(|e, _t| ents.push(e));
+            *ents.last().unwrap()
+        };
+        app.editor.selected_entity = Some(orig_e);
+        app.registry
+            .emplace(orig_e, NodeName::new("PlayerVessel".to_string()));
+        let orig_pos = app.registry.get::<Transform2D>(orig_e).unwrap().pos;
+
+        // Çoğalt (Duplicate / Ctrl+D)
+        app.duplicate_selected_entity();
+
+        let dup_e = app.editor.selected_entity.expect("Klon seçili olmalı");
+        assert_ne!(dup_e, orig_e);
+        let dup_pos = app.registry.get::<Transform2D>(dup_e).unwrap().pos;
+        assert_eq!(dup_pos, orig_pos + glam::Vec2::new(16.0, 16.0));
+        assert_eq!(
+            app.registry.get::<NodeName>(dup_e).map(|n| n.name.as_str()),
+            Some("PlayerVessel (Kopya)")
+        );
+
+        // Undo: Çoğaltılan silinir
+        app.undo();
+        assert!(!app.registry.is_alive(dup_e));
+
+        // Redo: Yeniden oluşturulur
+        app.redo();
+        let redone_e = app.editor.selected_entity.expect("Redo sonrası seçili olmalı");
+        assert!(app.registry.is_alive(redone_e));
+        assert_eq!(
+            app.registry.get::<Transform2D>(redone_e).unwrap().pos,
+            orig_pos + glam::Vec2::new(16.0, 16.0)
+        );
+    }
+
+    #[test]
+    fn test_prefab_save_and_load_scene_flow() {
+        let mut app = App::new();
+        app.spawn_preset_entity("ship");
+        let root = {
+            let mut ents = Vec::new();
+            app.registry
+                .view1_ref::<rugeng_core::Transform2D, _>(|e, _t| ents.push(e));
+            *ents.last().unwrap()
+        };
+        app.editor.selected_entity = Some(root);
+        app.registry
+            .emplace(root, NodeName::new("BossShip".to_string()));
+
+        let prefab_path = "/tmp/test_boss_ship.prefab";
+        assert!(app.save_selected_as_prefab(prefab_path).is_ok());
+
+        // Prefab'ı sahneye yükle
+        let loaded_ent = app
+            .load_prefab_to_scene(prefab_path)
+            .expect("Prefab yüklenemedi");
+        assert!(app.registry.is_alive(loaded_ent));
+        assert_eq!(
+            app.registry.get::<NodeName>(loaded_ent).map(|n| n.name.as_str()),
+            Some("BossShip")
+        );
+
+        let _ = std::fs::remove_file(prefab_path);
     }
 }

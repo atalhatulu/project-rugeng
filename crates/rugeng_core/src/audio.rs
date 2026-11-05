@@ -196,8 +196,254 @@ pub enum AudioBus {
     Music,
 }
 
+/// Aktif çalan bir ses örneği (Ses kanalı / Voice)
+#[derive(Clone, Debug)]
+pub struct AudioVoice {
+    pub id: u64,
+    pub clip_name: String,
+    pub bus: AudioBus,
+    pub volume: f32, // Ses örneğine özel lokal genlik (0.0..=1.0)
+    pub cursor_f64: f64,
+    pub is_looping: bool,
+    pub is_finished: bool,
+}
+
+/// Dahili Yazılımsal Ses Mikseri (Software Audio Mixer)
+///
+/// Harici süreç (fork/exec pw-play/aplay) çağrıları yerine:
+/// - Çok kanallı eşzamanlı ses çalma (polyphony / voices)
+/// - Bus bazlı ses seviyesi ölçekleme (Master, SFX, Music)
+/// - Stereo miksleme, format dönüşümü ve yumuşak kırpma (soft limiting)
+pub struct AudioMixer {
+    pub voices: Vec<AudioVoice>,
+    next_voice_id: u64,
+    pub master_volume: f32,
+    pub sfx_volume: f32,
+    pub music_volume: f32,
+    pub output_sample_rate: u32,
+    pub max_voices: usize,
+}
+
+impl Default for AudioMixer {
+    fn default() -> Self {
+        Self::new(44100)
+    }
+}
+
+impl AudioMixer {
+    pub const DEFAULT_MAX_VOICES: usize = 64;
+
+    pub fn new(output_sample_rate: u32) -> Self {
+        Self {
+            voices: Vec::with_capacity(Self::DEFAULT_MAX_VOICES),
+            next_voice_id: 1,
+            master_volume: 1.0,
+            sfx_volume: 0.8,
+            music_volume: 0.7,
+            output_sample_rate: output_sample_rate.max(8000),
+            max_voices: Self::DEFAULT_MAX_VOICES,
+        }
+    }
+
+    #[inline]
+    pub fn active_voice_count(&self) -> usize {
+        self.voices.iter().filter(|v| !v.is_finished).count()
+    }
+
+    pub fn play(
+        &mut self,
+        clip_name: impl Into<String>,
+        bus: AudioBus,
+        volume: f32,
+        looping: bool,
+    ) -> u64 {
+        // Voice-stealing: Kapasite dolduğunda bitmiş veya en eski SFX sesini çal
+        if self.active_voice_count() >= self.max_voices {
+            // Önce bitmiş bir ses ara
+            if let Some(finished_idx) = self.voices.iter().position(|v| v.is_finished) {
+                self.voices.swap_remove(finished_idx);
+            } else if let Some(oldest_idx) = self.voices.iter().position(|v| v.bus == AudioBus::Sfx) {
+                // SFX sesini feda et
+                self.voices.swap_remove(oldest_idx);
+            } else if !self.voices.is_empty() {
+                // Herhangi bir en eski sesi feda et
+                self.voices.remove(0);
+            }
+        }
+
+        let id = self.next_voice_id;
+        self.next_voice_id = self.next_voice_id.wrapping_add(1).max(1);
+
+        self.voices.push(AudioVoice {
+            id,
+            clip_name: clip_name.into(),
+            bus,
+            volume: volume.clamp(0.0, 1.0),
+            cursor_f64: 0.0,
+            is_looping: looping,
+            is_finished: false,
+        });
+
+        id
+    }
+
+    pub fn stop_voice(&mut self, voice_id: u64) {
+        if let Some(voice) = self.voices.iter_mut().find(|v| v.id == voice_id) {
+            voice.is_finished = true;
+        }
+    }
+
+    pub fn stop_all(&mut self) {
+        self.voices.clear();
+    }
+
+    pub fn stop_bus(&mut self, bus: AudioBus) {
+        for voice in &mut self.voices {
+            if voice.bus == bus {
+                voice.is_finished = true;
+            }
+        }
+    }
+
+    /// Verilen ses kütüphanesindeki klipleri miksleyerek çıkış stereo tamponunu (Interleaved L, R f32) doldurur.
+    /// f32 değerler -1.0 .. 1.0 aralığındadır.
+    pub fn mix_f32(
+        &mut self,
+        clips: &std::collections::HashMap<String, SoundClip>,
+        out_stereo_frames: &mut [f32],
+    ) {
+        // Çıkış tamponunu sıfırla
+        out_stereo_frames.fill(0.0);
+        let num_frames = out_stereo_frames.len() / 2;
+
+        let master = self.master_volume.clamp(0.0, 1.0);
+        let sfx_eff = (master * self.sfx_volume).clamp(0.0, 1.0);
+        let music_eff = (master * self.music_volume).clamp(0.0, 1.0);
+
+        for voice in &mut self.voices {
+            if voice.is_finished {
+                continue;
+            }
+
+            let Some(clip) = clips.get(&voice.clip_name) else {
+                voice.is_finished = true;
+                continue;
+            };
+
+            if clip.samples.is_empty() {
+                voice.is_finished = true;
+                continue;
+            }
+
+            let bus_vol = match voice.bus {
+                AudioBus::Master => master,
+                AudioBus::Sfx => sfx_eff,
+                AudioBus::Music => music_eff,
+            };
+            let gain = (bus_vol * voice.volume).clamp(0.0, 1.0);
+            let step = clip.sample_rate as f64 / self.output_sample_rate as f64;
+            let clip_len = clip.samples.len();
+
+            if gain <= 0.0001 {
+                let advanced = num_frames as f64 * step;
+                voice.cursor_f64 += advanced;
+                if voice.cursor_f64 >= clip_len as f64 {
+                    if voice.is_looping {
+                        voice.cursor_f64 %= clip_len as f64;
+                    } else {
+                        voice.is_finished = true;
+                    }
+                }
+                continue;
+            }
+
+            let gain_norm = gain / 32768.0;
+
+            for frame_idx in 0..num_frames {
+                let current_pos = voice.cursor_f64 + (frame_idx as f64 * step);
+
+                if current_pos >= clip_len as f64 {
+                    if voice.is_looping {
+                        let looped_pos = current_pos % (clip_len as f64);
+                        let idx0 = looped_pos as usize;
+                        let idx1 = if idx0 + 1 < clip_len { idx0 + 1 } else { 0 };
+                        let frac = (looped_pos - idx0 as f64) as f32;
+                        let s0 = clip.samples[idx0] as f32;
+                        let s1 = clip.samples[idx1] as f32;
+                        let s_interp = (s0 + frac * (s1 - s0)) * gain_norm;
+
+                        let out_idx = frame_idx * 2;
+                        out_stereo_frames[out_idx] += s_interp;
+                        out_stereo_frames[out_idx + 1] += s_interp;
+                    } else {
+                        voice.is_finished = true;
+                        break;
+                    }
+                } else {
+                    let idx0 = current_pos as usize;
+                    let frac = (current_pos - idx0 as f64) as f32;
+                    let s0 = clip.samples[idx0] as f32;
+                    let s1 = if idx0 + 1 < clip_len {
+                        clip.samples[idx0 + 1] as f32
+                    } else if voice.is_looping {
+                        clip.samples[0] as f32
+                    } else {
+                        s0
+                    };
+                    let s_interp = (s0 + frac * (s1 - s0)) * gain_norm;
+
+                    let out_idx = frame_idx * 2;
+                    out_stereo_frames[out_idx] += s_interp;
+                    out_stereo_frames[out_idx + 1] += s_interp;
+                }
+            }
+
+            if !voice.is_finished {
+                let advanced = num_frames as f64 * step;
+                voice.cursor_f64 += advanced;
+                if voice.cursor_f64 >= clip_len as f64 {
+                    if voice.is_looping {
+                        voice.cursor_f64 %= clip_len as f64;
+                    } else {
+                        voice.is_finished = true;
+                    }
+                }
+            }
+        }
+
+        // Biten sesleri temizle
+        self.voices.retain(|v| !v.is_finished);
+
+        // Soft-limiter / Clamp to -1.0 .. 1.0 to avoid harsh clipping
+        for s in out_stereo_frames.iter_mut() {
+            *s = s.clamp(-1.0, 1.0);
+        }
+    }
+
+    /// Çıkışı 16-bit stereo PCM baytlarına dönüştürür (Interleaved L16, R16 little-endian)
+    pub fn mix_i16_pcm(
+        &mut self,
+        clips: &std::collections::HashMap<String, SoundClip>,
+        num_frames: usize,
+        out_pcm_bytes: &mut Vec<u8>,
+    ) {
+        let mut float_buf = vec![0.0f32; num_frames * 2];
+        self.mix_f32(clips, &mut float_buf);
+
+        out_pcm_bytes.clear();
+        out_pcm_bytes.reserve(num_frames * 4); // 2 channels * 2 bytes
+
+        for &val in &float_buf {
+            let i_val = (val * 32767.0).clamp(-32768.0, 32767.0) as i16;
+            out_pcm_bytes.extend_from_slice(&i_val.to_le_bytes());
+        }
+    }
+}
+
 pub struct AudioEngine {
     pub clips: std::collections::HashMap<String, SoundClip>,
+    pub mixer: AudioMixer,
+    pub stream_driver: Option<AudioStreamDriver>,
     pub active_voices: usize,
     pub volume: f32, // Geriye dönük uyumluluk için (Master)
     pub master_volume: f32,
@@ -216,6 +462,8 @@ impl AudioEngine {
     pub fn new() -> Self {
         let mut engine = Self {
             clips: std::collections::HashMap::new(),
+            mixer: AudioMixer::new(44100),
+            stream_driver: Some(AudioStreamDriver::new(44100, 2)),
             active_voices: 0,
             volume: 0.8,
             master_volume: 1.0,
@@ -234,9 +482,16 @@ impl AudioEngine {
             AudioBus::Master => {
                 self.master_volume = clamped;
                 self.volume = clamped;
+                self.mixer.master_volume = clamped;
             }
-            AudioBus::Sfx => self.sfx_volume = clamped,
-            AudioBus::Music => self.music_volume = clamped,
+            AudioBus::Sfx => {
+                self.sfx_volume = clamped;
+                self.mixer.sfx_volume = clamped;
+            }
+            AudioBus::Music => {
+                self.music_volume = clamped;
+                self.mixer.music_volume = clamped;
+            }
         }
     }
 
@@ -438,14 +693,53 @@ impl AudioEngine {
         self.play_on_bus(sound_name, AudioBus::Sfx);
     }
 
+    pub fn play_with_volume(&mut self, sound_name: &str, volume: f32) {
+        self.play_on_bus_with_volume(sound_name, AudioBus::Sfx, volume);
+    }
+
     pub fn play_on_bus(&mut self, sound_name: &str, bus: AudioBus) {
+        self.play_on_bus_with_volume(sound_name, bus, 1.0);
+    }
+
+    pub fn play_on_bus_with_volume(&mut self, sound_name: &str, bus: AudioBus, volume: f32) {
         if let Some(clip) = self.clips.get(sound_name) {
             self.last_played_sound = sound_name.to_string();
-            self.active_voices += 1;
+            let vol_clamped = volume.clamp(0.0, 1.0);
+            self.mixer.play(sound_name, bus, vol_clamped, false);
+            self.active_voices = self.mixer.active_voice_count();
 
-            let vol = self.effective_volume(bus);
-            // Arka planda donanım oynatımı için WAV paketini ilet
-            Self::play_clip_backend(clip, vol);
+            let vol = (self.effective_volume(bus) * vol_clamped).clamp(0.0, 1.0);
+
+            // 1. Eğer kesintisiz akış sürücüsü aktifse, tek seferlik PCM parçacığını ring tampona bas
+            if let Some(driver) = &self.stream_driver {
+                let mut stereo_samples = Vec::with_capacity(clip.samples.len() * 2);
+                for &s in &clip.samples {
+                    let scaled = (s as f32 * vol).clamp(-32768.0, 32767.0) as i16;
+                    stereo_samples.push(scaled);
+                    stereo_samples.push(scaled);
+                }
+                driver.push_samples(&stereo_samples);
+            } else {
+                // Akış sürücüsü yoksa yedek harici süreç oynatımı
+                Self::play_clip_backend(clip, vol);
+            }
+        }
+    }
+
+    /// Çerçeve başına ses mikserini güncelleyip kesintisiz akış sürücüsüne PCM basar.
+    pub fn update_stream(&mut self, num_frames: usize) {
+        if self.mixer.active_voice_count() == 0 {
+            return;
+        }
+        if let Some(driver) = &self.stream_driver {
+            let mut pcm_bytes = Vec::new();
+            self.mixer.mix_i16_pcm(&self.clips, num_frames, &mut pcm_bytes);
+            let mut i16_samples = Vec::with_capacity(pcm_bytes.len() / 2);
+            for chunk in pcm_bytes.chunks_exact(2) {
+                i16_samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+            driver.push_samples(&i16_samples);
+            self.active_voices = self.mixer.active_voice_count();
         }
     }
 
@@ -536,6 +830,222 @@ impl AudioEngine {
         let clip = SoundClip::from_wav_file(name, path)?;
         self.clips.insert(name.to_string(), clip);
         Ok(())
+    }
+}
+
+/// Sabit boyutlu, eşzamanlı kilit korumalı ses ring tamponu (PCM Ring Buffer).
+/// Üretici (AudioEngine / AudioMixer) ile tüketici (Streaming thread) arasında
+/// sıfır ayrıştırma (allocation) ve kesintisiz PCM akışı sağlar.
+pub struct AudioRingBuffer {
+    buffer: Vec<i16>,
+    capacity: usize,
+    read_pos: usize,
+    write_pos: usize,
+    count: usize,
+}
+
+impl AudioRingBuffer {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            buffer: vec![0i16; capacity],
+            capacity,
+            read_pos: 0,
+            write_pos: 0,
+            count: 0,
+        }
+    }
+
+    pub fn available_read(&self) -> usize {
+        self.count
+    }
+
+    pub fn available_write(&self) -> usize {
+        self.capacity - self.count
+    }
+
+    /// Tampona örnekler yazar. Kapasite aşılırsa en eski örneklerin üzerine yazar (drop oldest)
+    /// böylece ses sürücüsü asla kilitlenmez (overflow safe).
+    pub fn write(&mut self, samples: &[i16]) -> usize {
+        let mut written = 0;
+        for &s in samples {
+            if self.count == self.capacity {
+                // Tampon dolu: En eskiyi atla
+                self.read_pos = (self.read_pos + 1) % self.capacity;
+            } else {
+                self.count += 1;
+            }
+            self.buffer[self.write_pos] = s;
+            self.write_pos = (self.write_pos + 1) % self.capacity;
+            written += 1;
+        }
+        written
+    }
+
+    /// Tampondan çıkış dilimine örnekleri okur. Okunan gerçek örnek sayısını döndürür.
+    pub fn read(&mut self, out: &mut [i16]) -> usize {
+        let to_read = out.len().min(self.count);
+        for item in out.iter_mut().take(to_read) {
+            *item = self.buffer[self.read_pos];
+            self.read_pos = (self.read_pos + 1) % self.capacity;
+        }
+        self.count -= to_read;
+        to_read
+    }
+
+    pub fn clear(&mut self) {
+        self.read_pos = 0;
+        self.write_pos = 0;
+        self.count = 0;
+    }
+}
+
+/// Dahili Kesintisiz Ses Akış Sürücüsü (Continuous Streaming Audio Driver).
+/// Arka planda çalışan tek bir iş parçacığı üzerinden donanım veya ses sunucusu
+/// (PipeWire / ALSA) ile açık bir boru (pipe) hattı kurar ve ring-buffer'dan
+/// kesintisiz PCM akışı besler. Her ses için süreç (process fork/exec) maliyetini sıfırlar.
+pub struct AudioStreamDriver {
+    ring_buffer: std::sync::Arc<std::sync::Mutex<AudioRingBuffer>>,
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread_handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl AudioStreamDriver {
+    pub const DEFAULT_BUFFER_SIZE: usize = 32768; // ~370ms buffer @ 44.1kHz stereo
+    pub const CHUNK_FRAMES: usize = 512; // ~11.6ms chunks for ultra low latency
+
+    pub fn new(sample_rate: u32, channels: u16) -> Self {
+        let ring_buffer = std::sync::Arc::new(std::sync::Mutex::new(AudioRingBuffer::new(
+            Self::DEFAULT_BUFFER_SIZE,
+        )));
+        let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+
+        let rb_clone = std::sync::Arc::clone(&ring_buffer);
+        let run_clone = std::sync::Arc::clone(&running);
+
+        let thread_handle = std::thread::spawn(move || {
+            use std::io::Write;
+            use std::process::{Command, Stdio};
+
+            // Önce PipeWire raw stdin akışı başlatmayı dene
+            let pw_proc = Command::new("pw-play")
+                .args([
+                    "--raw",
+                    &format!("--rate={sample_rate}"),
+                    &format!("--channels={channels}"),
+                    "--format=s16",
+                    "-",
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+
+            let mut active_pipe: Option<std::process::ChildStdin> = None;
+            let mut active_child: Option<std::process::Child> = None;
+
+            if let Ok(mut child) = pw_proc {
+                if let Some(stdin) = child.stdin.take() {
+                    active_pipe = Some(stdin);
+                    active_child = Some(child);
+                }
+            }
+
+            // PW yoksa ALSA aplay akışı dene
+            if active_pipe.is_none() {
+                let alsa_proc = Command::new("aplay")
+                    .args([
+                        "-q",
+                        "-f",
+                        "S16_LE",
+                        "-r",
+                        &format!("{sample_rate}"),
+                        "-c",
+                        &format!("{channels}"),
+                        "-",
+                    ])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+
+                if let Ok(mut child) = alsa_proc {
+                    if let Some(stdin) = child.stdin.take() {
+                        active_pipe = Some(stdin);
+                        active_child = Some(child);
+                    }
+                }
+            }
+
+            let mut chunk = vec![0i16; Self::CHUNK_FRAMES * (channels as usize)];
+            let mut byte_chunk = vec![0u8; chunk.len() * 2];
+
+            while run_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                let samples_read = {
+                    let mut lock = rb_clone.lock().unwrap();
+                    lock.read(&mut chunk)
+                };
+
+                if samples_read > 0 {
+                    // Donanım akış borusu varsa baytları bas
+                    if let Some(pipe) = active_pipe.as_mut() {
+                        byte_chunk.clear();
+                        for &s in &chunk[..samples_read] {
+                            byte_chunk.extend_from_slice(&s.to_le_bytes());
+                        }
+                        if pipe.write_all(&byte_chunk).is_err() {
+                            // Boru kapandıysa boruyu bırak, sessiz ring buffer olarak çalışmaya devam et
+                            active_pipe = None;
+                        }
+                    }
+                } else {
+                    // Tamponda ses yokken CPU yakmamak için uyu (~5ms)
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+
+            // Kapanış: açık boruları kapat
+            drop(active_pipe);
+            if let Some(mut child) = active_child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        });
+
+        Self {
+            ring_buffer,
+            running,
+            thread_handle: Some(thread_handle),
+        }
+    }
+
+    /// Tampona PCM örnekleri (interleaved stereo i16) ekler.
+    pub fn push_samples(&self, samples: &[i16]) {
+        if let Ok(mut lock) = self.ring_buffer.lock() {
+            lock.write(samples);
+        }
+    }
+
+    /// Tampondaki mevcut okunabilir örnek sayısını döndürür.
+    pub fn buffered_samples(&self) -> usize {
+        if let Ok(lock) = self.ring_buffer.lock() {
+            lock.available_read()
+        } else {
+            0
+        }
+    }
+
+    /// Akış sürücüsünü durdurur ve iş parçacığını temizler.
+    pub fn stop(&mut self) {
+        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for AudioStreamDriver {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -685,5 +1195,146 @@ mod tests {
         assert_eq!(clip.samples[1], 0);
         // (0.0 + -0.5) / 2 = -0.25 -> -0.25 * 32767 = -8191
         assert!((clip.samples[2] - (-8191)).abs() <= 1);
+    }
+
+    #[test]
+    fn test_audio_mixer_polyphony_and_bus_mixing() {
+        let mut clips = std::collections::HashMap::new();
+        clips.insert(
+            "tone_a".to_string(),
+            SoundClip {
+                name: "tone_a".to_string(),
+                sample_rate: 44100,
+                samples: vec![16384, 16384, 16384, 16384],
+            },
+        );
+        clips.insert(
+            "tone_b".to_string(),
+            SoundClip {
+                name: "tone_b".to_string(),
+                sample_rate: 44100,
+                samples: vec![16384, 16384, 16384, 16384],
+            },
+        );
+
+        let mut mixer = AudioMixer::new(44100);
+        mixer.master_volume = 1.0;
+        mixer.sfx_volume = 1.0;
+        mixer.music_volume = 0.5;
+
+        // 2 ses başlat: biri SFX, biri Music
+        mixer.play("tone_a", AudioBus::Sfx, 1.0, false);
+        mixer.play("tone_b", AudioBus::Music, 1.0, false);
+        assert_eq!(mixer.active_voice_count(), 2);
+
+        // 4 çerçeve miksle (stereo => 8 float)
+        let mut out_stereo = vec![0.0f32; 8];
+        mixer.mix_f32(&clips, &mut out_stereo);
+
+        // tone_a katkısı: 16384 / 32768 = 0.5 * 1.0 = 0.5
+        // tone_b katkısı: 16384 / 32768 = 0.5 * 0.5 = 0.25
+        // Toplam = 0.75
+        for &sample in &out_stereo {
+            assert!((sample - 0.75).abs() < 1e-3);
+        }
+
+        // Sesler 4 örnek uzunluğundaydı, miks sonrası tamamlanmış olmalı
+        assert_eq!(mixer.active_voice_count(), 0);
+
+        // PCM testi
+        let mut pcm = Vec::new();
+        mixer.play("tone_a", AudioBus::Sfx, 1.0, false);
+        mixer.mix_i16_pcm(&clips, 2, &mut pcm);
+        // 2 çerçeve stereo = 4 i16 = 8 bayt
+        assert_eq!(pcm.len(), 8);
+    }
+
+    #[test]
+    fn test_audio_mixer_linear_interpolation_resampling() {
+        let mut clips = std::collections::HashMap::new();
+        // 22050 Hz klip, 44100 Hz mikser çıkışı (2x upsampling)
+        clips.insert(
+            "ramp".to_string(),
+            SoundClip {
+                name: "ramp".to_string(),
+                sample_rate: 22050,
+                samples: vec![0, 16384, 32767],
+            },
+        );
+
+        let mut mixer = AudioMixer::new(44100);
+        mixer.master_volume = 1.0;
+        mixer.sfx_volume = 1.0;
+        mixer.play("ramp", AudioBus::Sfx, 1.0, false);
+
+        // 4 çerçeve miksle (step = 0.5)
+        // frame 0: pos = 0.0 -> clip[0] = 0.0
+        // frame 1: pos = 0.5 -> interp(0, 16384, 0.5) = 8192 / 32768 = 0.25
+        // frame 2: pos = 1.0 -> clip[1] = 16384 / 32768 = 0.5
+        // frame 3: pos = 1.5 -> interp(16384, 32767, 0.5) approx 0.75
+        let mut out = vec![0.0f32; 8];
+        mixer.mix_f32(&clips, &mut out);
+
+        assert!((out[0] - 0.0).abs() < 1e-3);
+        assert!((out[2] - 0.25).abs() < 1e-3);
+        assert!((out[4] - 0.5).abs() < 1e-3);
+        assert!((out[6] - 0.75).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_audio_mixer_voice_stealing() {
+        let mut mixer = AudioMixer::new(44100);
+        mixer.max_voices = 2;
+
+        let v1 = mixer.play("sfx1", AudioBus::Sfx, 1.0, false);
+        let v2 = mixer.play("music1", AudioBus::Music, 1.0, false);
+        assert_eq!(mixer.active_voice_count(), 2);
+
+        // max_voices = 2 iken 3. ses eklendiğinde SFX (v1) steal edilmeli
+        let v3 = mixer.play("sfx2", AudioBus::Sfx, 1.0, false);
+        assert_eq!(mixer.active_voice_count(), 2);
+        assert!(!mixer.voices.iter().any(|v| v.id == v1));
+        assert!(mixer.voices.iter().any(|v| v.id == v2));
+        assert!(mixer.voices.iter().any(|v| v.id == v3));
+    }
+
+    #[test]
+    fn test_audio_ring_buffer_fifo_and_overflow_protection() {
+        let mut rb = AudioRingBuffer::new(4);
+        assert_eq!(rb.available_write(), 4);
+        assert_eq!(rb.available_read(), 0);
+
+        // 3 örnek yaz
+        rb.write(&[10, 20, 30]);
+        assert_eq!(rb.available_read(), 3);
+        assert_eq!(rb.available_write(), 1);
+
+        // 2 örnek oku
+        let mut out = [0i16; 2];
+        let read_count = rb.read(&mut out);
+        assert_eq!(read_count, 2);
+        assert_eq!(out, [10, 20]);
+        assert_eq!(rb.available_read(), 1);
+
+        // Taşırma (overflow) testi: 4 eleman daha yaz (toplam kapasiteyi aşar)
+        rb.write(&[40, 50, 60, 70]);
+        assert_eq!(rb.available_read(), 4);
+
+        // En son 4 eleman sırasıyla gelmeli (en eski olan 30 atılmış oldu)
+        let mut full_out = [0i16; 4];
+        let n = rb.read(&mut full_out);
+        assert_eq!(n, 4);
+        assert_eq!(full_out, [40, 50, 60, 70]);
+        assert_eq!(rb.available_read(), 0);
+    }
+
+    #[test]
+    fn test_audio_stream_driver_push_and_lifecycle() {
+        let mut driver = AudioStreamDriver::new(44100, 2);
+        let samples = vec![1000i16, -1000i16, 2000i16, -2000i16];
+        driver.push_samples(&samples);
+        // Tamponda örnekler bulunmalı (veya arka plan iş parçacığı tarafından okunana dek işlenebilir)
+        assert!(driver.buffered_samples() <= 4);
+        driver.stop();
     }
 }

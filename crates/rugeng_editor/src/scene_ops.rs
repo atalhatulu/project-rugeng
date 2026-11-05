@@ -4,7 +4,7 @@ use glam::Vec2;
 use rugeng_assets::VersionedScene;
 use rugeng_core::{
     Animation2DComponent, AnimationClip, Children, Collider2D, Entity, Mesh3DComponent, NodeName,
-    Parent, ParticleEmitterComponent, SceneData, SceneEntity, ScriptComponent, SpriteColor,
+    Parent, ParticleEmitterComponent, Prefab, SceneData, SceneEntity, ScriptComponent, SpriteColor,
     SpriteTexture, Text2DComponent, TileData, TileType, Tilemap2DComponent, Transform2D,
     Transform3D, Velocity2D, ZIndex2D,
 };
@@ -332,53 +332,138 @@ impl App {
 
     pub(crate) fn duplicate_selected_entity(&mut self) {
         if let Some(src) = self.editor.selected_entity {
-            if let Some(mut tr) = self.registry.get::<Transform2D>(src).copied() {
-                tr.pos += Vec2::new(24.0, 24.0);
-                let new_e = self.registry.create();
-                self.registry.emplace(new_e, tr);
-
-                if let Some(c) = self.registry.get::<SpriteColor>(src).copied() {
-                    self.registry.emplace(new_e, c);
-                }
-                if let Some(t) = self.registry.get::<SpriteTexture>(src).cloned() {
-                    self.registry.emplace(new_e, t);
-                }
-                if let Some(c) = self.registry.get::<Collider2D>(src).copied() {
-                    self.registry.emplace(new_e, c);
-                }
-                if let Some(v) = self.registry.get::<Velocity2D>(src).copied() {
-                    self.registry.emplace(new_e, v);
-                }
-                if let Some(s) = self.registry.get::<ScriptComponent>(src).cloned() {
-                    self.registry.emplace(new_e, s);
-                }
-                if let Some(txt) = self.registry.get::<Text2DComponent>(src).cloned() {
-                    self.registry.emplace(new_e, txt);
-                }
-                if let Some(anim) = self.registry.get::<Animation2DComponent>(src).cloned() {
-                    self.registry.emplace(new_e, anim);
-                }
-                if let Some(tm) = self.registry.get::<Tilemap2DComponent>(src).cloned() {
-                    self.registry.emplace(new_e, tm);
-                }
-
-                self.editor.undo_stack.push(UndoAction::CreateEntity(new_e));
-                self.editor.redo_stack.clear();
-                self.editor.selected_entity = Some(new_e);
-                self.editor.is_scene_dirty = true;
-                self.audio.play("sfx_blip");
-                self.editor.logs.push(LogMessage {
-                    level: "INFO",
-                    text: format!(
-                        "Dugum #{}:{} cogaltildi -> Yeni Dugum #{}:{}",
-                        src.index(),
-                        src.generation(),
-                        new_e.index(),
-                        new_e.generation()
-                    ),
-                });
+            if !self.registry.is_alive(src) {
+                return;
             }
+
+            let tr2_opt = self.registry.get::<Transform2D>(src).copied();
+            let tr3_opt = self.registry.get::<Transform3D>(src).copied();
+
+            if tr2_opt.is_none() && tr3_opt.is_none() {
+                return;
+            }
+
+            let new_e = self.registry.create();
+
+            // 1. NodeName (Varsa " (Kopya)" ekle veya aynı adı taşı)
+            let src_name = self.registry.get::<NodeName>(src).map(|n| n.name.clone());
+            let new_name = match src_name {
+                Some(name) => format!("{} (Kopya)", name),
+                None => {
+                    if tr3_opt.is_some() && tr2_opt.is_none() {
+                        format!("Node3D_{}", new_e.index())
+                    } else {
+                        format!("Node2D_{}", new_e.index())
+                    }
+                }
+            };
+            self.registry.emplace(new_e, NodeName::new(new_name));
+
+            // 2. 2D Transform (+16.0, +16.0 ofset ile çoğalt)
+            if let Some(mut tr) = tr2_opt {
+                tr.pos += Vec2::new(16.0, 16.0);
+                self.registry.emplace(new_e, tr);
+            }
+
+            // 3. 3D Transform (+1.0, 0.0, +1.0 ofset ile çoğalt)
+            if let Some(mut tr3) = tr3_opt {
+                tr3.translation += glam::Vec3::new(1.0, 0.0, 1.0);
+                self.registry.emplace(new_e, tr3);
+            }
+
+            if let Some(m3) = self.registry.get::<Mesh3DComponent>(src).cloned() {
+                self.registry.emplace(new_e, m3);
+            }
+            if let Some(c) = self.registry.get::<SpriteColor>(src).copied() {
+                self.registry.emplace(new_e, c);
+            }
+            if let Some(t) = self.registry.get::<SpriteTexture>(src).cloned() {
+                self.registry.emplace(new_e, t);
+            }
+            if let Some(c) = self.registry.get::<Collider2D>(src).copied() {
+                self.registry.emplace(new_e, c);
+            }
+            if let Some(v) = self.registry.get::<Velocity2D>(src).copied() {
+                self.registry.emplace(new_e, v);
+            }
+            if let Some(s) = self.registry.get::<ScriptComponent>(src).cloned() {
+                self.registry.emplace(new_e, s);
+            }
+            if let Some(txt) = self.registry.get::<Text2DComponent>(src).cloned() {
+                self.registry.emplace(new_e, txt);
+            }
+            if let Some(anim) = self.registry.get::<Animation2DComponent>(src).cloned() {
+                self.registry.emplace(new_e, anim);
+            }
+            if let Some(tm) = self.registry.get::<Tilemap2DComponent>(src).cloned() {
+                self.registry.emplace(new_e, tm);
+            }
+            if let Some(zi) = self.registry.get::<ZIndex2D>(src).copied() {
+                self.registry.emplace(new_e, zi);
+            }
+            if let Some(p) = self.registry.get::<ParticleEmitterComponent>(src).cloned() {
+                self.registry.emplace(new_e, p);
+            }
+
+            self.editor.undo_stack.push(UndoAction::CreateEntity(new_e));
+            self.editor.redo_stack.clear();
+            self.editor.selected_entity = Some(new_e);
+            self.editor.is_scene_dirty = true;
+            self.audio.play("sfx_blip");
+            self.editor.logs.push(LogMessage {
+                level: "INFO",
+                text: format!(
+                    "Dugum #{}:{} cogaltildi (Ctrl+D) -> Yeni Dugum #{}:{}",
+                    src.index(),
+                    src.generation(),
+                    new_e.index(),
+                    new_e.generation()
+                ),
+            });
         }
+    }
+
+    /// Seçili varlığı ve hiyerarşisini .prefab dosyası olarak kaydeder.
+    pub(crate) fn save_selected_as_prefab(&mut self, path: &str) -> Result<(), String> {
+        let Some(selected) = self.editor.selected_entity else {
+            return Err("Prefab kaydedilemedi: Hiçbir varlık seçili değil.".to_string());
+        };
+
+        let prefab = Prefab::from_entity(&self.registry, selected)?;
+        prefab.save_to_file(path)?;
+
+        self.editor.logs.push(LogMessage {
+            level: "INFO",
+            text: format!("Prefab '{}' başarıyla kaydedildi.", path),
+        });
+        self.audio.play("sfx_blip");
+        self.editor.refresh_files();
+        Ok(())
+    }
+
+    /// .prefab dosyasını okuyup kameranın baktığı yere örnekler (instantiate).
+    pub(crate) fn load_prefab_to_scene(&mut self, path: &str) -> Result<Entity, String> {
+        let prefab = Prefab::load_from_file(path)?;
+        let spawn_pos_2d = self.editor.camera.pos;
+        let spawn_pos_3d = self.editor.camera_3d.eye + self.editor.camera_3d.forward() * 4.0;
+
+        let root_e = prefab.instantiate(&mut self.registry, spawn_pos_2d, spawn_pos_3d);
+
+        self.editor.undo_stack.push(UndoAction::CreateEntity(root_e));
+        self.editor.redo_stack.clear();
+        self.editor.selected_entity = Some(root_e);
+        self.editor.is_scene_dirty = true;
+        self.audio.play("sfx_blip");
+        self.editor.logs.push(LogMessage {
+            level: "INFO",
+            text: format!(
+                "Prefab '{}' sahneye eklendi (Kök Varlık #{}).",
+                prefab.name,
+                root_e.index()
+            ),
+        });
+
+        Ok(root_e)
     }
 
     pub(crate) fn spawn_preset_entity(&mut self, preset: &str) {
@@ -765,6 +850,7 @@ impl App {
             });
         Some(EntitySnapshot {
             entity: e,
+            name: self.registry.get::<NodeName>(e).cloned(),
             transform,
             color: self.registry.get::<SpriteColor>(e).copied(),
             texture: self.registry.get::<SpriteTexture>(e).cloned(),
@@ -794,7 +880,10 @@ impl App {
 
     pub(crate) fn restore_entity(&mut self, snap: EntitySnapshot) -> Entity {
         let new_e = self.registry.create();
-        if snap.transform_3d.is_some() || self.registry.has::<Transform2D>(snap.entity) {
+        if let Some(name) = snap.name {
+            self.registry.emplace(new_e, name);
+        }
+        if snap.transform_3d.is_none() || (snap.transform.size.x > 0.0 && snap.transform.size.y > 0.0) {
             self.registry.emplace(new_e, snap.transform);
         }
         if let Some(t3) = snap.transform_3d {

@@ -3775,6 +3775,97 @@ impl App {
                 cur_insp_y += tm_h + 8.0;
             }
 
+            // BİLEŞEN 8: Parçacık Yayıcı (ParticleEmitterComponent) Kartı
+            let particle_opt = self.registry.get::<ParticleEmitterComponent>(e).cloned();
+            if let Some(p) = particle_opt {
+                let p_h = 76.0;
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, cur_insp_y],
+                    [right_w - 16.0, p_h],
+                    theme.card_bg,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, cur_insp_y],
+                    [right_w - 16.0, 20.0],
+                    theme.card_header,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, cur_insp_y],
+                    [right_w - 16.0, 1.0],
+                    theme.border_subtle,
+                    0,
+                ));
+                font::draw_text(
+                    &mut instances,
+                    "v Parçacık Yayıcı (Particle)",
+                    insp_x + 14.0,
+                    cur_insp_y + 4.0,
+                    1.3,
+                    godot_yellow,
+                );
+
+                // Emitting Durumu ve Toggle
+                let emit_status = if p.is_active { "[Aktif]" } else { "[Durduruldu]" };
+                let emit_col = if p.is_active { godot_green } else { godot_red };
+                font::draw_text(
+                    &mut instances,
+                    &format!("Durum: {} (Hiz: {:.0})", emit_status, p.speed_min),
+                    insp_x + 14.0,
+                    cur_insp_y + 26.0,
+                    1.2,
+                    emit_col,
+                );
+
+                // [Patlat / Burst] Butonu
+                instances.push(QuadInstance::new(
+                    [insp_x + 14.0, cur_insp_y + 48.0],
+                    [110.0, 20.0],
+                    theme.btn_normal,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 14.0, cur_insp_y + 48.0],
+                    [110.0, 1.0],
+                    theme.border_subtle,
+                    0,
+                ));
+                font::draw_text(
+                    &mut instances,
+                    "[Patlat (Burst)]",
+                    insp_x + 20.0,
+                    cur_insp_y + 52.0,
+                    1.1,
+                    text_norm,
+                );
+
+                // [Ac/Kapat] Butonu
+                instances.push(QuadInstance::new(
+                    [insp_x + 130.0, cur_insp_y + 48.0],
+                    [110.0, 20.0],
+                    theme.btn_normal,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 130.0, cur_insp_y + 48.0],
+                    [110.0, 1.0],
+                    theme.border_subtle,
+                    0,
+                ));
+                let toggle_txt = if p.is_active { "[Durdur]" } else { "[Baslat]" };
+                font::draw_text(
+                    &mut instances,
+                    toggle_txt,
+                    insp_x + 146.0,
+                    cur_insp_y + 52.0,
+                    1.1,
+                    text_norm,
+                );
+
+                cur_insp_y += p_h + 8.0;
+            }
+
             // [+ Add Component / Node] Butonu
             let add_btn_y = cur_insp_y;
             instances.push(QuadInstance::new(
@@ -3808,6 +3899,8 @@ impl App {
                     ("+ Text2D (Metin) Ekle", 3),
                     ("+ Animation2D (Animasyon) Ekle", 4),
                     ("+ Tilemap2D (Harita) Ekle", 5),
+                    ("+ ParticleEmitter (Parcacik) Ekle", 6),
+                    ("+ ZIndex2D (Katman Derinligi) Ekle", 7),
                 ];
                 let pop_h = (pop_items.len() as f32) * 22.0 + 8.0;
                 instances.push(QuadInstance::new(
@@ -4176,7 +4269,7 @@ impl App {
                         ("[<] Geri Al", "Ctrl+Z", "undo"),
                         ("[>] Yinele", "Ctrl+Y", "redo"),
                         ("[-] Ayirici", "", ""),
-                        ("[D] Varligi Cogalt", "Ctrl+C", "duplicate"),
+                        ("[D] Varligi Cogalt", "Ctrl+D", "duplicate"),
                         ("[X] Varligi Sil", "Del", "delete"),
                         ("[A] Tumunu Sec", "", "select_all"),
                     ],
