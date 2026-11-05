@@ -449,7 +449,9 @@ impl App {
 
         let root_e = prefab.instantiate(&mut self.registry, spawn_pos_2d, spawn_pos_3d);
 
-        self.editor.undo_stack.push(UndoAction::CreateEntity(root_e));
+        self.editor
+            .undo_stack
+            .push(UndoAction::CreateEntity(root_e));
         self.editor.redo_stack.clear();
         self.editor.selected_entity = Some(root_e);
         self.editor.is_scene_dirty = true;
@@ -883,7 +885,9 @@ impl App {
         if let Some(name) = snap.name {
             self.registry.emplace(new_e, name);
         }
-        if snap.transform_3d.is_none() || (snap.transform.size.x > 0.0 && snap.transform.size.y > 0.0) {
+        if snap.transform_3d.is_none()
+            || (snap.transform.size.x > 0.0 && snap.transform.size.y > 0.0)
+        {
             self.registry.emplace(new_e, snap.transform);
         }
         if let Some(t3) = snap.transform_3d {

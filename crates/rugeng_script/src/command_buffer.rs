@@ -61,7 +61,12 @@ impl ScriptCommandBuffer {
     }
 
     #[inline]
-    pub fn push_play_sound(&mut self, name: impl Into<String>, bus: rugeng_core::AudioBus, volume: f32) {
+    pub fn push_play_sound(
+        &mut self,
+        name: impl Into<String>,
+        bus: rugeng_core::AudioBus,
+        volume: f32,
+    ) {
         self.commands.push(ScriptCommand::PlaySound {
             name: name.into(),
             bus,

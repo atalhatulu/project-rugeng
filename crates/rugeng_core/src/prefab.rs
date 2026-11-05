@@ -80,7 +80,8 @@ impl Prefab {
 
     /// Prefab'ı JSON dizgisine dönüştürür.
     pub fn to_json(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(self).map_err(|e| format!("Prefab JSON serileştirme hatası: {e}"))
+        serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Prefab JSON serileştirme hatası: {e}"))
     }
 
     /// JSON dizgisinden Prefab nesnesini ayrıştırır.
@@ -94,8 +95,7 @@ impl Prefab {
         if let Some(parent) = path.as_ref().parent() {
             let _ = fs::create_dir_all(parent);
         }
-        fs::write(path.as_ref(), json_str)
-            .map_err(|e| format!("Prefab dosyasına yazılamadı: {e}"))
+        fs::write(path.as_ref(), json_str).map_err(|e| format!("Prefab dosyasına yazılamadı: {e}"))
     }
 
     /// Diskten `.prefab` dosyasını okuyup Prefab nesnesi döndürür.
@@ -108,12 +108,7 @@ impl Prefab {
     /// Prefab'ı belirtilen 2D ve 3D öteleme (offset) değerleriyle sahneye örnekler (instantiate).
     /// Kök varlığı (`root`) ve tüm hiyerarşik çocuklarını yeni Entity ID'leri ile oluşturup bağlar.
     /// Oluşturulan kök Entity'yi döndürür.
-    pub fn instantiate(
-        &self,
-        registry: &mut Registry,
-        offset_2d: Vec2,
-        offset_3d: Vec3,
-    ) -> Entity {
+    pub fn instantiate(&self, registry: &mut Registry, offset_2d: Vec2, offset_3d: Vec3) -> Entity {
         let mut id_map: HashMap<u32, Entity> = HashMap::new();
 
         // 1. Kök varlığı oluştur
@@ -129,7 +124,8 @@ impl Prefab {
         // 3. Ebeveyn / Çocuk (Parent / Children) hiyerarşisini bağla
         for c in &self.children {
             if let Some(pid) = c.parent_id {
-                if let (Some(&child_ent), Some(&parent_ent)) = (id_map.get(&c.id), id_map.get(&pid)) {
+                if let (Some(&child_ent), Some(&parent_ent)) = (id_map.get(&c.id), id_map.get(&pid))
+                {
                     registry.emplace(child_ent, Parent { entity: parent_ent });
                     if let Some(ch) = registry.get_mut::<Children>(parent_ent) {
                         ch.add(child_ent);

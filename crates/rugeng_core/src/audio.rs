@@ -262,7 +262,8 @@ impl AudioMixer {
             // Önce bitmiş bir ses ara
             if let Some(finished_idx) = self.voices.iter().position(|v| v.is_finished) {
                 self.voices.swap_remove(finished_idx);
-            } else if let Some(oldest_idx) = self.voices.iter().position(|v| v.bus == AudioBus::Sfx) {
+            } else if let Some(oldest_idx) = self.voices.iter().position(|v| v.bus == AudioBus::Sfx)
+            {
                 // SFX sesini feda et
                 self.voices.swap_remove(oldest_idx);
             } else if !self.voices.is_empty() {
@@ -733,7 +734,8 @@ impl AudioEngine {
         }
         if let Some(driver) = &self.stream_driver {
             let mut pcm_bytes = Vec::new();
-            self.mixer.mix_i16_pcm(&self.clips, num_frames, &mut pcm_bytes);
+            self.mixer
+                .mix_i16_pcm(&self.clips, num_frames, &mut pcm_bytes);
             let mut i16_samples = Vec::with_capacity(pcm_bytes.len() / 2);
             for chunk in pcm_bytes.chunks_exact(2) {
                 i16_samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
@@ -1036,7 +1038,8 @@ impl AudioStreamDriver {
 
     /// Akış sürücüsünü durdurur ve iş parçacığını temizler.
     pub fn stop(&mut self) {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(handle) = self.thread_handle.take() {
             let _ = handle.join();
         }

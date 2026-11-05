@@ -43,6 +43,7 @@ mod ui;
 
 use theme::*;
 use types::*;
+use ui::DockLayout;
 pub(crate) struct EditorState {
     pub(crate) theme: EditorTheme,
     pub(crate) selected_entity: Option<Entity>,
@@ -80,6 +81,9 @@ pub(crate) struct EditorState {
     pub(crate) right_click_start: Option<Vec2>,
     pub(crate) right_click_down: bool,
     pub(crate) is_ctrl_pressed: bool,
+    pub(crate) dock_left_w: f32,
+    pub(crate) dock_right_w: f32,
+    pub(crate) dock_bottom_h: f32,
 }
 
 impl EditorState {
@@ -246,6 +250,9 @@ impl App {
             right_click_start: None,
             right_click_down: false,
             is_ctrl_pressed: false,
+            dock_left_w: DockLayout::DEFAULT_LEFT_W,
+            dock_right_w: DockLayout::DEFAULT_RIGHT_W,
+            dock_bottom_h: DockLayout::DEFAULT_BOTTOM_H,
         };
 
         editor.refresh_files();
@@ -614,16 +621,16 @@ impl ApplicationHandler for App {
                         let sz = win.inner_size();
                         let screen_w = sz.width as f32;
                         let screen_h = sz.height as f32;
-                        let left_w = 260.0;
-                        let vp_x = left_w;
-                        let right_w = 300.0;
-                        let bottom_h = 160.0;
+                        let left_w = self.editor.dock_left_w;
+                        let right_w = self.editor.dock_right_w;
+                        let bottom_h = self.editor.dock_bottom_h;
                         let menu_h = 30.0;
                         let scene_tab_h = 26.0;
                         let vp_tool_h = 24.0;
                         let vp_canvas_y = menu_h + scene_tab_h + vp_tool_h;
-                        let vp_w = screen_w - left_w - right_w;
-                        let vp_canvas_h = screen_h - bottom_h - vp_canvas_y;
+                        let vp_x = left_w;
+                        let vp_w = (screen_w - left_w - right_w).max(100.0);
+                        let vp_canvas_h = (screen_h - bottom_h - vp_canvas_y).max(100.0);
                         let vp_center =
                             Vec2::new(left_w + vp_w * 0.5, vp_canvas_y + vp_canvas_h * 0.5);
                         let current_world_m =
@@ -826,8 +833,43 @@ impl ApplicationHandler for App {
                                         }
                                     }
                                     DragMode::None => {}
+                                    DragMode::SplitterLeft { .. }
+                                    | DragMode::SplitterRight { .. }
+                                    | DragMode::SplitterBottom { .. } => {}
                                 }
                             }
+                        }
+
+                        // Panel Ayırıcı (Splitter) Sürükleme Mantığı (Varlık seçimi gerektirmez)
+                        match self.editor.drag_mode {
+                            DragMode::SplitterLeft {
+                                start_left_w,
+                                start_mouse_x,
+                            } => {
+                                let delta_x = m.x - start_mouse_x;
+                                let new_w = (start_left_w + delta_x)
+                                    .clamp(160.0, (screen_w * 0.45).max(160.0));
+                                self.editor.dock_left_w = new_w;
+                            }
+                            DragMode::SplitterRight {
+                                start_right_w,
+                                start_mouse_x,
+                            } => {
+                                let delta_x = start_mouse_x - m.x; // Sola sürüklemek sağ paneli genişletir
+                                let new_w = (start_right_w + delta_x)
+                                    .clamp(180.0, (screen_w * 0.45).max(180.0));
+                                self.editor.dock_right_w = new_w;
+                            }
+                            DragMode::SplitterBottom {
+                                start_bottom_h,
+                                start_mouse_y,
+                            } => {
+                                let delta_y = start_mouse_y - m.y; // Yukarı sürüklemek alt paneli genişletir
+                                let new_h = (start_bottom_h + delta_y)
+                                    .clamp(80.0, (screen_h * 0.5).max(80.0));
+                                self.editor.dock_bottom_h = new_h;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -868,16 +910,17 @@ impl ApplicationHandler for App {
                                         let sz = win.inner_size();
                                         let screen_w = sz.width as f32;
                                         let screen_h = sz.height as f32;
-                                        let menu_h = 30.0;
-                                        let left_w = 260.0;
-                                        let right_w = 300.0;
-                                        let bottom_h = 160.0;
-                                        let scene_tab_h = 26.0;
-                                        let vp_tool_h = 24.0;
-                                        let vp_x = left_w;
-                                        let vp_w = screen_w - left_w - right_w;
-                                        let vp_canvas_y = menu_h + scene_tab_h + vp_tool_h;
-                                        let vp_canvas_h = screen_h - bottom_h - vp_canvas_y;
+                                        let layout = crate::ui::DockLayout::with_custom_sizes(
+                                            screen_w,
+                                            screen_h,
+                                            self.editor.dock_left_w,
+                                            self.editor.dock_right_w,
+                                            self.editor.dock_bottom_h,
+                                        );
+                                        let vp_x = layout.vp_x;
+                                        let vp_w = layout.vp_w;
+                                        let vp_canvas_y = layout.vp_canvas_y;
+                                        let vp_canvas_h = layout.vp_canvas_h;
                                         let mouse = self.editor.mouse_pos;
 
                                         // Viewport tuval sınırları içindeyse
@@ -893,8 +936,92 @@ impl ApplicationHandler for App {
                                                 let render_cam =
                                                     self.editor.camera_3d.to_render_camera(aspect);
                                                 let vp_mat = render_cam.view_projection();
+                                                let ndc_x = ((mouse.x - vp_x) / vp_w) * 2.0 - 1.0;
+                                                let ndc_y = 1.0
+                                                    - ((mouse.y - vp_canvas_y) / vp_canvas_h) * 2.0;
+                                                let inv_vp = vp_mat.inverse();
+                                                let p_near_h = inv_vp
+                                                    * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+                                                let p_far_h = inv_vp
+                                                    * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+
+                                                if p_near_h.w.abs() > 1e-6 && p_far_h.w.abs() > 1e-6
+                                                {
+                                                    let p_near = p_near_h.truncate() / p_near_h.w;
+                                                    let p_far = p_far_h.truncate() / p_far_h.w;
+                                                    let ray_dir = (p_far - p_near).normalize();
+                                                    let ray_3d = rugeng_physics::Ray3D::new(
+                                                        p_near, ray_dir, 1000.0,
+                                                    );
+                                                    let mut min_ray_dist = f32::INFINITY;
+
+                                                    let entities_3d: Vec<(
+                                                        Entity,
+                                                        Transform3D,
+                                                        Option<Mesh3DComponent>,
+                                                    )> = self
+                                                        .registry
+                                                        .entities::<Transform3D>()
+                                                        .into_iter()
+                                                        .filter_map(|e| {
+                                                            let t3 = self
+                                                                .registry
+                                                                .get::<Transform3D>(e)
+                                                                .copied()?;
+                                                            let m3 = self
+                                                                .registry
+                                                                .get::<Mesh3DComponent>(e)
+                                                                .cloned();
+                                                            Some((e, t3, m3))
+                                                        })
+                                                        .collect();
+
+                                                    for (ent, t3, m3) in &entities_3d {
+                                                        let mut entity_hit_dist = None;
+                                                        if let Some(mesh_comp) = m3 {
+                                                            if mesh_comp.mesh_name == "sphere" {
+                                                                let radius = (t3
+                                                                    .scale
+                                                                    .x
+                                                                    .max(t3.scale.y)
+                                                                    .max(t3.scale.z)
+                                                                    * 0.5)
+                                                                    .max(0.2);
+                                                                let sphere = rugeng_physics::BoundingSphere::new(t3.translation, radius);
+                                                                if let Some(hit) = rugeng_physics::ray_intersect_sphere(&ray_3d, &sphere) {
+                                                                    entity_hit_dist = Some(hit.dist);
+                                                                }
+                                                            } else {
+                                                                let half_ext = (t3.scale * 0.5)
+                                                                    .max(glam::Vec3::splat(0.2));
+                                                                let aabb = rugeng_physics::AABB3D::from_center_half_extents(t3.translation, half_ext);
+                                                                if let Some(hit) = rugeng_physics::ray_intersect_aabb_3d(&ray_3d, &aabb) {
+                                                                    entity_hit_dist = Some(hit.dist);
+                                                                }
+                                                            }
+                                                        } else {
+                                                            let half_ext = (t3.scale * 0.5)
+                                                                .max(glam::Vec3::splat(0.2));
+                                                            let aabb = rugeng_physics::AABB3D::from_center_half_extents(t3.translation, half_ext);
+                                                            if let Some(hit) = rugeng_physics::ray_intersect_aabb_3d(&ray_3d, &aabb) {
+                                                                    entity_hit_dist = Some(hit.dist);
+                                                                }
+                                                        }
+
+                                                        if let Some(dist) = entity_hit_dist {
+                                                            if dist < min_ray_dist {
+                                                                min_ray_dist = dist;
+                                                                target_ent = Some(*ent);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
                                                 let mut closest_d = 40.0;
                                                 for ent in self.registry.entities::<Transform3D>() {
+                                                    if target_ent.is_some() {
+                                                        break;
+                                                    }
                                                     if let Some(t3) =
                                                         self.registry.get::<Transform3D>(ent)
                                                     {
@@ -954,7 +1081,8 @@ impl ApplicationHandler for App {
                                                         action_id: "duplicate".to_string(),
                                                     },
                                                     ContextMenuItem {
-                                                        label: "[P] Prefab Olarak Kaydet".to_string(),
+                                                        label: "[P] Prefab Olarak Kaydet"
+                                                            .to_string(),
                                                         shortcut: "".to_string(),
                                                         action_id: "save_prefab".to_string(),
                                                     },
@@ -2064,7 +2192,7 @@ mod tests {
         app.editor.workspace = WorkspaceMode::ThreeD;
         app.spawn_preset_entity("sphere_3d");
 
-        let e = app.registry.entities::<Transform3D>()[0];
+        let e = *app.registry.entities::<Transform3D>().last().unwrap();
         app.editor.selected_entity = None;
         assert_eq!(app.editor.selected_entity, None);
 
@@ -2183,6 +2311,162 @@ mod tests {
             orig_scale.z * 1.5,
             "Scale3D olcekleme uygulamali"
         );
+    }
+
+    #[test]
+    fn test_dock_layout_and_splitter_drag() {
+        let mut app = App::new();
+        let screen_w = 1280.0;
+        let screen_h = 720.0;
+
+        let initial_layout = DockLayout::with_custom_sizes(
+            screen_w,
+            screen_h,
+            app.editor.dock_left_w,
+            app.editor.dock_right_w,
+            app.editor.dock_bottom_h,
+        );
+
+        // 1. Sol splitter tespiti ve sürükleme testi
+        let splitter_hit_pos = Vec2::new(initial_layout.left_w, 200.0);
+        assert!(initial_layout.is_over_left_splitter(splitter_hit_pos));
+
+        app.editor.drag_mode = DragMode::SplitterLeft {
+            start_left_w: app.editor.dock_left_w,
+            start_mouse_x: splitter_hit_pos.x,
+        };
+
+        // Fareyi sağa sürükle (+40px)
+        let m = Vec2::new(splitter_hit_pos.x + 40.0, 200.0);
+        if let DragMode::SplitterLeft {
+            start_left_w,
+            start_mouse_x,
+        } = app.editor.drag_mode
+        {
+            let delta = m.x - start_mouse_x;
+            let max_w = (screen_w * 0.45f32).max(160.0);
+            app.editor.dock_left_w = (start_left_w + delta).clamp(160.0, max_w);
+        }
+        assert_eq!(app.editor.dock_left_w, 300.0);
+
+        // 2. Alt splitter tespiti ve sürükleme testi
+        let bottom_y = screen_h - app.editor.dock_bottom_h;
+        let bot_hit_pos = Vec2::new(500.0, bottom_y);
+        let updated_layout = DockLayout::with_custom_sizes(
+            screen_w,
+            screen_h,
+            app.editor.dock_left_w,
+            app.editor.dock_right_w,
+            app.editor.dock_bottom_h,
+        );
+        assert!(updated_layout.is_over_bottom_splitter(bot_hit_pos));
+
+        app.editor.drag_mode = DragMode::SplitterBottom {
+            start_bottom_h: app.editor.dock_bottom_h,
+            start_mouse_y: bot_hit_pos.y,
+        };
+
+        // Fareyi yukarı sürükle (-30px) -> bottom_h artmalı
+        let m_bot = Vec2::new(500.0, bot_hit_pos.y - 30.0);
+        if let DragMode::SplitterBottom {
+            start_bottom_h,
+            start_mouse_y,
+        } = app.editor.drag_mode
+        {
+            let delta = start_mouse_y - m_bot.y;
+            let max_h = (screen_h * 0.5f32).max(80.0);
+            app.editor.dock_bottom_h = (start_bottom_h + delta).clamp(80.0, max_h);
+        }
+        assert_eq!(app.editor.dock_bottom_h, 190.0);
+
+        // 3. Sağ splitter tespiti ve sürükleme testi
+        let default_layout = DockLayout::new(screen_w, screen_h);
+        let right_hit_pos = Vec2::new(default_layout.insp_x, 200.0);
+        assert!(default_layout.is_over_right_splitter(right_hit_pos));
+
+        app.editor.drag_mode = DragMode::SplitterRight {
+            start_right_w: app.editor.dock_right_w,
+            start_mouse_x: right_hit_pos.x,
+        };
+
+        // Fareyi sola sürükle (-50px) -> right_w artmalı
+        let m_right = Vec2::new(right_hit_pos.x - 50.0, 200.0);
+        if let DragMode::SplitterRight {
+            start_right_w,
+            start_mouse_x,
+        } = app.editor.drag_mode
+        {
+            let delta = start_mouse_x - m_right.x;
+            let max_w = (screen_w * 0.45f32).max(180.0);
+            app.editor.dock_right_w = (start_right_w + delta).clamp(180.0, max_w);
+        }
+        assert_eq!(app.editor.dock_right_w, 350.0);
+
+        // 4. Küçük ekran / aşırı boyut kenetleme (clamping) ve asgari viewport garantisi
+        let small_layout = DockLayout::with_custom_sizes(640.0, 480.0, 500.0, 500.0, 400.0);
+        assert!(
+            small_layout.vp_w >= 100.0,
+            "Viewport asgari 100px genislik korumali"
+        );
+        assert!(
+            small_layout.vp_canvas_h >= 100.0,
+            "Viewport asgari 100px yukseklik korumali"
+        );
+
+        // 5. Sürükleme bitişi
+        app.editor.drag_mode = DragMode::None;
+        assert_eq!(app.editor.drag_mode, DragMode::None);
+    }
+
+    #[test]
+    fn test_editor_3d_right_click_raycast_picking() {
+        let mut app = App::new();
+        app.editor.workspace = WorkspaceMode::ThreeD;
+        app.spawn_preset_entity("sphere_3d");
+
+        let e = *app.registry.entities::<Transform3D>().last().unwrap();
+        app.editor.selected_entity = None;
+        assert_eq!(app.editor.selected_entity, None);
+
+        let screen_w = 1280.0;
+        let screen_h = 720.0;
+        let layout = DockLayout::with_custom_sizes(
+            screen_w,
+            screen_h,
+            app.editor.dock_left_w,
+            app.editor.dock_right_w,
+            app.editor.dock_bottom_h,
+        );
+
+        let aspect = layout.vp_w / layout.vp_canvas_h.max(1.0);
+        let render_cam = app.editor.camera_3d.to_render_camera(aspect);
+        let vp_mat = render_cam.view_projection();
+
+        let t3 = app.registry.get::<Transform3D>(e).copied().unwrap();
+        let clip =
+            vp_mat * glam::Vec4::new(t3.translation.x, t3.translation.y, t3.translation.z, 1.0);
+        assert!(clip.w > 0.05);
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+        let sx = layout.vp_x + (ndc_x * 0.5 + 0.5) * layout.vp_w;
+        let sy = layout.vp_canvas_y + (1.0 - (ndc_y * 0.5 + 0.5)) * layout.vp_canvas_h;
+        assert!(sx >= layout.vp_x && sx <= layout.vp_x + layout.vp_w);
+        assert!(sy >= layout.vp_canvas_y && sy <= layout.vp_canvas_y + layout.vp_canvas_h);
+
+        // 3D Raycasting ile sağ tıklama seçimi doğrula
+        let inv_vp = vp_mat.inverse();
+        let p_near_h = inv_vp * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+        let p_far_h = inv_vp * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+        assert!(p_near_h.w.abs() > 1e-6);
+
+        let p_near = p_near_h.truncate() / p_near_h.w;
+        let p_far = p_far_h.truncate() / p_far_h.w;
+        let ray_dir = (p_far - p_near).normalize();
+        let ray_3d = rugeng_physics::Ray3D::new(p_near, ray_dir, 1000.0);
+        let sphere = rugeng_physics::BoundingSphere::new(t3.translation, 0.5);
+        let hit = rugeng_physics::ray_intersect_sphere(&ray_3d, &sphere);
+        assert!(hit.is_some(), "Kureye yonelen isin kesismelidir");
+        assert!(hit.unwrap().dist > 0.0);
     }
 
     #[test]
@@ -2492,7 +2776,10 @@ mod tests {
 
         // Redo: Yeniden oluşturulur
         app.redo();
-        let redone_e = app.editor.selected_entity.expect("Redo sonrası seçili olmalı");
+        let redone_e = app
+            .editor
+            .selected_entity
+            .expect("Redo sonrası seçili olmalı");
         assert!(app.registry.is_alive(redone_e));
         assert_eq!(
             app.registry.get::<Transform2D>(redone_e).unwrap().pos,
@@ -2523,7 +2810,9 @@ mod tests {
             .expect("Prefab yüklenemedi");
         assert!(app.registry.is_alive(loaded_ent));
         assert_eq!(
-            app.registry.get::<NodeName>(loaded_ent).map(|n| n.name.as_str()),
+            app.registry
+                .get::<NodeName>(loaded_ent)
+                .map(|n| n.name.as_str()),
             Some("BossShip")
         );
 

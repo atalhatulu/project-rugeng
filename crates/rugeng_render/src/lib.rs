@@ -15,7 +15,7 @@ pub mod theme;
 
 pub use camera_3d::{AmbientLight, Camera3D, DirectionalLight};
 pub use context::{Swapchain, VulkanContext, FRAMES_IN_FLIGHT};
-pub use depth::{DepthBuffer, DEPTH_FORMAT};
+pub use depth::{DepthBuffer, DirectionalShadowMap, DEPTH_FORMAT};
 pub use font::TrueTypeFont;
 pub use gpu_mesh::GpuMesh3D;
 pub use icons::*;

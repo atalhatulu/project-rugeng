@@ -17,19 +17,45 @@ impl App {
         double_click: bool,
     ) {
         let menu_h = 30.0;
-        let left_w = 260.0;
-        let right_w = 300.0;
-        let bottom_h = 160.0;
+        let left_w = self.editor.dock_left_w;
+        let right_w = self.editor.dock_right_w;
+        let bottom_h = self.editor.dock_bottom_h;
 
         let left_top_h = (screen_h - menu_h) * 0.52;
         let left_bot_y = menu_h + left_top_h;
         let vp_x = left_w;
-        let vp_w = screen_w - left_w - right_w;
+        let vp_w = (screen_w - left_w - right_w).max(100.0);
         let scene_tab_h = 26.0;
         let vp_tool_h = 24.0;
         let vp_canvas_y = menu_h + scene_tab_h + vp_tool_h;
-        let vp_canvas_h = screen_h - bottom_h - vp_canvas_y;
+        let vp_canvas_h = (screen_h - bottom_h - vp_canvas_y).max(100.0);
         let insp_x = screen_w - right_w;
+
+        let layout =
+            crate::ui::DockLayout::with_custom_sizes(screen_w, screen_h, left_w, right_w, bottom_h);
+
+        // Splitter (Panel Ayırıcı) Tutamaçlarına Tıklama Kontrolü
+        if layout.is_over_left_splitter(mouse) {
+            self.editor.drag_mode = DragMode::SplitterLeft {
+                start_left_w: left_w,
+                start_mouse_x: mouse.x,
+            };
+            return;
+        }
+        if layout.is_over_right_splitter(mouse) {
+            self.editor.drag_mode = DragMode::SplitterRight {
+                start_right_w: right_w,
+                start_mouse_x: mouse.x,
+            };
+            return;
+        }
+        if layout.is_over_bottom_splitter(mouse) {
+            self.editor.drag_mode = DragMode::SplitterBottom {
+                start_bottom_h: bottom_h,
+                start_mouse_y: mouse.y,
+            };
+            return;
+        }
 
         // Eğer açık bir Sağ Tık Bağlam Menüsü (Context Menu) varsa:
         if let Some(ctx_menu) = self.editor.context_menu.take() {
@@ -1039,26 +1065,106 @@ impl App {
                         }
                     }
 
-                    // B. 3D Sahnedeki Varlıkları Seçme (Raycast / Nearest Projection)
+                    // B. 3D Sahnedeki Varlıkları Seçme (Analitik 3D Raycasting & Projeksiyon Hibrit Seçimi)
+                    // Viewport pikselini Vulkan NDC koordinatına (-1..1) dönüştür
+                    let ndc_x = ((mouse.x - vp_x) / vp_w) * 2.0 - 1.0;
+                    let ndc_y = 1.0 - ((mouse.y - vp_canvas_y) / vp_canvas_h) * 2.0;
+
+                    let inv_vp = vp_mat.inverse();
+                    // NDC near (z=0.0) ve far (z=1.0) noktalarının dünya koordinatlarına projeksiyonu
+                    let p_near_h = inv_vp * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+                    let p_far_h = inv_vp * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+
                     let mut hit_3d = None;
-                    let mut closest_dist = 36.0; // 36 piksel seçme toleransı
 
-                    let entities_3d: Vec<(Entity, Transform3D)> = self
-                        .registry
-                        .entities::<Transform3D>()
-                        .into_iter()
-                        .filter_map(|e| {
-                            let t3 = self.registry.get::<Transform3D>(e).copied()?;
-                            Some((e, t3))
-                        })
-                        .collect();
+                    if p_near_h.w.abs() > 1e-6 && p_far_h.w.abs() > 1e-6 {
+                        let p_near = p_near_h.truncate() / p_near_h.w;
+                        let p_far = p_far_h.truncate() / p_far_h.w;
+                        let ray_dir = (p_far - p_near).normalize();
+                        let ray_3d = rugeng_physics::Ray3D::new(p_near, ray_dir, 1000.0);
 
-                    for (ent, t3) in entities_3d {
-                        if let Some(sp) = project_pt(t3.translation) {
-                            let dist = (mouse - sp).length();
-                            if dist < closest_dist {
-                                closest_dist = dist;
-                                hit_3d = Some(ent);
+                        let mut min_ray_dist = f32::INFINITY;
+
+                        let entities_3d: Vec<(Entity, Transform3D, Option<Mesh3DComponent>)> = self
+                            .registry
+                            .entities::<Transform3D>()
+                            .into_iter()
+                            .filter_map(|e| {
+                                let t3 = self.registry.get::<Transform3D>(e).copied()?;
+                                let m3 = self.registry.get::<Mesh3DComponent>(e).cloned();
+                                Some((e, t3, m3))
+                            })
+                            .collect();
+
+                        for (ent, t3, m3) in &entities_3d {
+                            let mut entity_hit_dist = None;
+
+                            // Eğer varlığın Mesh3DComponent'i varsa türüne göre test et
+                            if let Some(mesh_comp) = m3 {
+                                if mesh_comp.mesh_name == "sphere" {
+                                    let radius =
+                                        (t3.scale.x.max(t3.scale.y).max(t3.scale.z) * 0.5).max(0.2);
+                                    let sphere =
+                                        rugeng_physics::BoundingSphere::new(t3.translation, radius);
+                                    if let Some(hit) =
+                                        rugeng_physics::ray_intersect_sphere(&ray_3d, &sphere)
+                                    {
+                                        entity_hit_dist = Some(hit.dist);
+                                    }
+                                } else {
+                                    let half_ext = (t3.scale * 0.5).max(glam::Vec3::splat(0.2));
+                                    let aabb = rugeng_physics::AABB3D::from_center_half_extents(
+                                        t3.translation,
+                                        half_ext,
+                                    );
+                                    if let Some(hit) =
+                                        rugeng_physics::ray_intersect_aabb_3d(&ray_3d, &aabb)
+                                    {
+                                        entity_hit_dist = Some(hit.dist);
+                                    }
+                                }
+                            } else {
+                                let half_ext = (t3.scale * 0.5).max(glam::Vec3::splat(0.2));
+                                let aabb = rugeng_physics::AABB3D::from_center_half_extents(
+                                    t3.translation,
+                                    half_ext,
+                                );
+                                if let Some(hit) =
+                                    rugeng_physics::ray_intersect_aabb_3d(&ray_3d, &aabb)
+                                {
+                                    entity_hit_dist = Some(hit.dist);
+                                }
+                            }
+
+                            if let Some(dist) = entity_hit_dist {
+                                if dist < min_ray_dist {
+                                    min_ray_dist = dist;
+                                    hit_3d = Some(*ent);
+                                }
+                            }
+                        }
+                    }
+
+                    // Raycasting bir varlık yakalamadıysa piksel yakınlığı toleransıyla geri düş (fallback)
+                    if hit_3d.is_none() {
+                        let mut closest_dist = 36.0; // 36 piksel seçme toleransı
+                        let entities_3d: Vec<(Entity, Transform3D)> = self
+                            .registry
+                            .entities::<Transform3D>()
+                            .into_iter()
+                            .filter_map(|e| {
+                                let t3 = self.registry.get::<Transform3D>(e).copied()?;
+                                Some((e, t3))
+                            })
+                            .collect();
+
+                        for (ent, t3) in entities_3d {
+                            if let Some(sp) = project_pt(t3.translation) {
+                                let dist = (mouse - sp).length();
+                                if dist < closest_dist {
+                                    closest_dist = dist;
+                                    hit_3d = Some(ent);
+                                }
                             }
                         }
                     }
@@ -1921,7 +2027,11 @@ impl App {
                                 self.audio.play("sfx_laser");
                                 self.editor.logs.push(LogMessage {
                                     level: "INFO",
-                                    text: format!("Dugum #{}:{} icin parcacik patlatildi.", e.index(), e.generation()),
+                                    text: format!(
+                                        "Dugum #{}:{} icin parcacik patlatildi.",
+                                        e.index(),
+                                        e.generation()
+                                    ),
                                 });
                             }
                             return;

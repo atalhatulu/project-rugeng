@@ -74,14 +74,24 @@ case "$MODE" in
         ;;
     check)
         print_header
-        echo -e "${C_BLUE}1/3: Testler denetleniyor...${C_RESET}"
+        echo -e "${C_BLUE}1/5: Testler denetleniyor (--workspace)...${C_RESET}"
         cargo test --workspace
-        echo -e "${C_BLUE}2/3: Clippy analizi calistiriliyor...${C_RESET}"
+        echo -e "${C_BLUE}2/5: Clippy analizi calistiriliyor...${C_RESET}"
         cargo clippy --workspace --all-targets -- -D warnings
-        echo -e "${C_BLUE}3/3: Format uyumu kontrol ediliyor...${C_RESET}"
+        echo -e "${C_BLUE}3/5: Format uyumu kontrol ediliyor...${C_RESET}"
         cargo fmt --check
+        echo -e "${C_BLUE}4/5: Loom eszamanlilik / veri yarisi analizi calistiriliyor...${C_RESET}"
+        RUSTFLAGS="--cfg loom" cargo test --test loom_scheduler
+        echo -e "${C_BLUE}5/5: Miri bellek guvenligi denetimi calistiriliyor...${C_RESET}"
+        if command -v cargo-miri >/dev/null 2>&1 && rustup toolchain list | grep -q "nightly"; then
+            cargo +nightly miri test -p rugeng_physics --lib
+            cargo +nightly miri test -p rugeng_core --lib arena
+        else
+            echo -e "${C_YELLOW}Miri nightly araci bulunamadi, Miri adimi atlandi.${C_RESET}"
+        fi
         echo -e "${C_GREEN}${C_BOLD}Tum denetimler basarili!${C_RESET}"
         ;;
+
     fmt)
         print_header
         echo -e "${C_BLUE}Kodlar formatlaniyor...${C_RESET}"

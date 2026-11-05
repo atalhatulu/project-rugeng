@@ -408,6 +408,18 @@ pub enum DragMode {
         start_scale: Vec3,
         start_mouse: Vec2,
     },
+    SplitterLeft {
+        start_left_w: f32,
+        start_mouse_x: f32,
+    },
+    SplitterRight {
+        start_right_w: f32,
+        start_mouse_x: f32,
+    },
+    SplitterBottom {
+        start_bottom_h: f32,
+        start_mouse_y: f32,
+    },
 }
 
 #[derive(Clone, Debug)]

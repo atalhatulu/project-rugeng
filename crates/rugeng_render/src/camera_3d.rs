@@ -31,6 +31,50 @@ impl DirectionalLight {
             intensity,
         }
     }
+
+    /// Işık yönüne göre gölge haritası bakış matrisi (LookAt) üretir.
+    /// `center`: Gölge hacminin odaklandığı dünya koordinatı (örn: sahne merkezi).
+    /// `distance`: Işık kamerasının odak merkezine olan mesafesi.
+    #[inline]
+    pub fn light_view_matrix(&self, center: Vec3, distance: f32) -> Mat4 {
+        let light_dir = if self.direction.length_squared() < 1e-6 {
+            Vec3::new(0.5, 1.0, 0.7).normalize()
+        } else {
+            self.direction.normalize()
+        };
+        let eye = center + light_dir * distance;
+        // Eğer ışık yönü tam Y eksenine paralel ise Up vektörünü Z olarak seç
+        let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        Mat4::look_at_rh(eye, center, up)
+    }
+
+    /// Yönlü ışık için ortografik projeksiyon matrisi üretir (Vulkan RH, Z in [0, 1]).
+    /// `ortho_size`: Gölge kutusunun yarı genişliği/yüksekliği.
+    /// `z_near` / `z_far`: Yakın ve uzak kırpma düzlemleri.
+    #[inline]
+    pub fn light_projection_matrix(&self, ortho_size: f32, z_near: f32, z_far: f32) -> Mat4 {
+        let s = ortho_size.max(0.1);
+        Mat4::orthographic_rh(-s, s, -s, s, z_near, z_far)
+    }
+
+    /// Işık uzayı View-Projection matrisini üretir (`Proj * View`).
+    #[inline]
+    pub fn light_space_matrix(
+        &self,
+        center: Vec3,
+        distance: f32,
+        ortho_size: f32,
+        z_near: f32,
+        z_far: f32,
+    ) -> Mat4 {
+        let view = self.light_view_matrix(center, distance);
+        let proj = self.light_projection_matrix(ortho_size, z_near, z_far);
+        proj * view
+    }
 }
 
 /// Ortam Işığı (Ambient Light)
@@ -142,5 +186,27 @@ mod tests {
         // Hedef nokta view uzayında (0, 0, -dist) olmalı
         let target_in_view = view.transform_point3(cam.target);
         assert!(target_in_view.z < 0.0);
+    }
+
+    #[test]
+    fn test_directional_light_shadow_matrices() {
+        let sun = DirectionalLight::default();
+        let center = Vec3::new(0.0, 1.0, 0.0);
+        let dist = 20.0;
+        let ortho = 15.0;
+        let z_near = 0.5;
+        let z_far = 50.0;
+
+        let light_view = sun.light_view_matrix(center, dist);
+        let light_proj = sun.light_projection_matrix(ortho, z_near, z_far);
+        let light_space = sun.light_space_matrix(center, dist, ortho, z_near, z_far);
+
+        assert_eq!(light_space, light_proj * light_view);
+
+        // Merkez nokta view matrisinde tam z negatif ekseninde olmalı
+        let c_in_light = light_view.transform_point3(center);
+        assert!((c_in_light.x).abs() < 1e-4);
+        assert!((c_in_light.y).abs() < 1e-4);
+        assert!(c_in_light.z < 0.0);
     }
 }

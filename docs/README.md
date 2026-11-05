@@ -7,6 +7,7 @@ Bu dizin, motorun gelistirme asamalari, mimari elestirileri, panel tasarimlari v
 ## 1. Teslim ve Asama Raporlari
 
 - [final_motor_teslim_raporu.md](file:///home/teha/Documents/GitHub/project-rugeng/docs/final_motor_teslim_raporu.md): Asama 0'dan Asama 8'e kadar tum cekirdek, render, editor, ses, betik ve bagimsiz calistirici teslimati, test sonuclari ve mimari elestiri.
+- [phase_implementation_report.md](file:///home/teha/Documents/GitHub/project-rugeng/docs/phase_implementation_report.md): Faz 1 - Faz 4 arasi modulerlesme, 3D isin kesisimi (raycast), golge haritasi derinlik tamponu ve suruklenebilir dock splitter mimari raporu.
 - [proje_asama_durum_raporu.md](file:///home/teha/Documents/GitHub/project-rugeng/docs/proje_asama_durum_raporu.md): Gelistirme yol haritasi kontrol listesi ve mevcut durum ozeti.
 - [stage0_core_hardening.md](file:///home/teha/Documents/GitHub/project-rugeng/docs/stage0_core_hardening.md): Lock-free FrameArena, flat sparse-set ECS, Miri testleri.
 - [stage1_vulkan_2d_render.md](file:///home/teha/Documents/GitHub/project-rugeng/docs/stage1_vulkan_2d_render.md): Vulkan 1.3 Dynamic Rendering, 32-byte QuadInstance, ring buffer.
