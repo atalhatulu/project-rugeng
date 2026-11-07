@@ -44,6 +44,10 @@ struct App {
     window: Option<Arc<Window>>,
     context: Option<VulkanContext>,
     depth_buffer: Option<DepthBuffer>,
+    shadow_map: Option<rugeng_render::DirectionalShadowMap>,
+    shadow_pipeline: Option<rugeng_render::ShadowPipeline3D>,
+    shadow_sampler: Option<ash::vk::Sampler>,
+    shadow_descriptor_set: Option<ash::vk::DescriptorSet>,
     pipeline_3d: Option<Pipeline3D>,
     pipeline_2d: Option<Pipeline2D>,
     atlas: Option<TextureAtlas>,
@@ -106,11 +110,22 @@ impl Drop for App {
             if let Some(mut db) = self.depth_buffer.take() {
                 db.destroy(&ctx.device, &mut alloc);
             }
+            if let Some(mut sm) = self.shadow_map.take() {
+                sm.destroy(&ctx.device, &mut alloc);
+            }
             if let Some(mut atlas) = self.atlas.take() {
                 atlas.destroy(&ctx.device, &mut alloc);
             }
             drop(alloc);
 
+            if let Some(sampler) = self.shadow_sampler.take() {
+                unsafe {
+                    ctx.device.destroy_sampler(sampler, None);
+                }
+            }
+            if let Some(mut sp) = self.shadow_pipeline.take() {
+                sp.destroy(&ctx.device);
+            }
             if let Some(mut p3d) = self.pipeline_3d.take() {
                 p3d.destroy(&ctx.device);
             }
@@ -189,6 +204,10 @@ impl App {
             window: None,
             context: None,
             depth_buffer: None,
+            shadow_map: None,
+            shadow_pipeline: None,
+            shadow_sampler: None,
+            shadow_descriptor_set: None,
             pipeline_3d: None,
             pipeline_2d: None,
             atlas: None,
@@ -340,7 +359,121 @@ impl App {
 
         let (image_index, cmd) = frame_token;
 
-        // Dynamic rendering kapsamını derinlik ekiyle başlat (Koyu lacivert gökyüzü rengiyle temizle)
+        // Işık uzayı matrisi (Yönlü ışık gölge kamerası)
+        let light_space = self
+            .sun
+            .light_space_matrix(glam::Vec3::ZERO, 15.0, 12.0, 0.1, 40.0);
+
+        let parent_world = self.objects[1].transform.local_matrix();
+
+        // =========================================================================
+        // 1. GÖLGE DERİNLİK GEÇİŞİ (SHADOW PASS)
+        // =========================================================================
+        if let (Some(shadow_map), Some(shadow_pipe)) =
+            (self.shadow_map.as_ref(), self.shadow_pipeline.as_ref())
+        {
+            // Gölge haritasını derinlik eki moduna al
+            shadow_map.transition_to_attachment(&ctx.device, cmd);
+
+            let res = shadow_map.resolution;
+            let depth_clear = ash::vk::ClearValue {
+                depth_stencil: ash::vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            };
+
+            let shadow_attachment = ash::vk::RenderingAttachmentInfo::default()
+                .image_view(shadow_map.view)
+                .image_layout(ash::vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .load_op(ash::vk::AttachmentLoadOp::CLEAR)
+                .store_op(ash::vk::AttachmentStoreOp::STORE)
+                .clear_value(depth_clear);
+
+            let shadow_rendering_info = ash::vk::RenderingInfo::default()
+                .render_area(ash::vk::Rect2D {
+                    offset: ash::vk::Offset2D { x: 0, y: 0 },
+                    extent: ash::vk::Extent2D {
+                        width: res,
+                        height: res,
+                    },
+                })
+                .layer_count(1)
+                .depth_attachment(&shadow_attachment);
+
+            unsafe {
+                ctx.device.cmd_begin_rendering(cmd, &shadow_rendering_info);
+
+                ctx.device.cmd_bind_pipeline(
+                    cmd,
+                    ash::vk::PipelineBindPoint::GRAPHICS,
+                    shadow_pipe.pipeline,
+                );
+
+                let viewport = ash::vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: res as f32,
+                    height: res as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                };
+                ctx.device.cmd_set_viewport(cmd, 0, &[viewport]);
+
+                let scissor = ash::vk::Rect2D {
+                    offset: ash::vk::Offset2D { x: 0, y: 0 },
+                    extent: ash::vk::Extent2D {
+                        width: res,
+                        height: res,
+                    },
+                };
+                ctx.device.cmd_set_scissor(cmd, 0, &[scissor]);
+
+                // Gölge veren tüm nesneleri çiz (Zemin hariç: mesh_idx != 2)
+                for obj in &self.objects {
+                    if obj.mesh_idx == 2 {
+                        continue;
+                    }
+                    let world_mat = if obj.is_child {
+                        compute_world_transform_3d(parent_world, &obj.transform)
+                    } else {
+                        obj.transform.local_matrix()
+                    };
+
+                    let light_space_mvp = light_space * world_mat;
+                    let pc = rugeng_render::ShadowPushConstants {
+                        light_space_mvp: light_space_mvp.to_cols_array(),
+                    };
+                    ctx.device.cmd_push_constants(
+                        cmd,
+                        shadow_pipe.layout,
+                        ash::vk::ShaderStageFlags::VERTEX,
+                        0,
+                        bytemuck::bytes_of(&pc),
+                    );
+
+                    let gpu_mesh = match obj.mesh_idx {
+                        0 => self.gpu_cube.as_ref().unwrap(),
+                        1 => self.gpu_sphere.as_ref().unwrap(),
+                        _ => self
+                            .gpu_gltf
+                            .as_ref()
+                            .unwrap_or_else(|| self.gpu_cube.as_ref().unwrap()),
+                    };
+
+                    gpu_mesh.draw(&ctx.device, cmd);
+                }
+
+                ctx.device.cmd_end_rendering(cmd);
+            }
+
+            // Gölge haritasını gölgelendirici okuma moduna geçir
+            shadow_map.transition_to_shader_read(&ctx.device, cmd);
+        }
+
+        // =========================================================================
+        // 2. ANA SAHNE RENDER GEÇİŞİ (MAIN PASS)
+        // =========================================================================
         ctx.begin_rendering_with_depth(cmd, image_index, [0.08, 0.10, 0.15, 1.0], Some(depth_view));
 
         // 3D Çizim Adımı (Frustum Culling ile)
@@ -352,8 +485,6 @@ impl App {
 
         let mut rendered = 0;
         let mut culled = 0;
-
-        let parent_world = self.objects[1].transform.local_matrix();
 
         for i in 0..self.objects.len() {
             let obj = &self.objects[i];
@@ -382,7 +513,18 @@ impl App {
                     .unwrap_or_else(|| self.gpu_cube.as_ref().unwrap()),
             };
 
-            p3d.draw_mesh(
+            let roughness = match obj.mesh_idx {
+                2 => 0.8,
+                1 => 0.2,
+                _ => 0.4,
+            };
+            let metallic = match obj.mesh_idx {
+                2 => 0.05,
+                1 => 0.85,
+                _ => 0.2,
+            };
+
+            p3d.draw_mesh_pbr_viewport_ext(
                 &ctx.device,
                 cmd,
                 &self.camera,
@@ -390,8 +532,15 @@ impl App {
                 world_mat,
                 &self.sun,
                 &self.ambient,
+                roughness,
+                metallic,
                 false,
-                extent,
+                false,
+                self.shadow_descriptor_set,
+                0.0,
+                0.0,
+                extent.width as f32,
+                extent.height as f32,
             );
         }
 
@@ -456,7 +605,7 @@ impl App {
 
         font::draw_text(
             &mut instances,
-            "G1-G7: Transform3D + Depth + Lighting + Frustum Culling + 2D Overlay",
+            "Stage 11: Directional Shadow Map (2048x2048 D32_SFLOAT) + PCF 3x3: ON",
             25.0,
             126.0,
             0.9,
@@ -515,6 +664,21 @@ impl ApplicationHandler for App {
 
             let atlas = TextureAtlas::new(&context, 512, 512).expect("TextureAtlas baslatilamadi");
 
+            // Gölge Haritası ve Gölge Pipeline'ı (2048x2048 D32_SFLOAT)
+            let shadow_map = rugeng_render::DirectionalShadowMap::new(
+                &context.device,
+                Arc::clone(&context.allocator),
+                rugeng_render::DirectionalShadowMap::DEFAULT_RESOLUTION,
+            )
+            .expect("DirectionalShadowMap baslatilamadi");
+
+            let shadow_pipeline =
+                rugeng_render::ShadowPipeline3D::new(&context.device, shadow_map.format)
+                    .expect("ShadowPipeline3D baslatilamadi");
+
+            let shadow_sampler = rugeng_render::create_shadow_sampler(&context.device)
+                .expect("Shadow Sampler baslatilamadi");
+
             let pipeline_3d = Pipeline3D::new(
                 &context.device,
                 context.swapchain.format,
@@ -523,6 +687,53 @@ impl ApplicationHandler for App {
                 atlas.sampler,
             )
             .expect("Pipeline3D baslatilamadi");
+
+            // Shadow Map Descriptor Set (Binding 0: Albedo, Binding 1: MR, Binding 2: ShadowMap)
+            let shadow_descriptor_set = {
+                let alloc_info = ash::vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(pipeline_3d.descriptor_pool)
+                    .set_layouts(std::slice::from_ref(&pipeline_3d.descriptor_set_layout));
+
+                let d_set = unsafe {
+                    context
+                        .device
+                        .allocate_descriptor_sets(&alloc_info)
+                        .expect("Shadow Descriptor Set allocate edilemedi")[0]
+                };
+
+                let img_info_albedo = ash::vk::DescriptorImageInfo::default()
+                    .image_layout(ash::vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(atlas.image_view)
+                    .sampler(atlas.sampler);
+
+                let img_info_shadow = ash::vk::DescriptorImageInfo::default()
+                    .image_layout(ash::vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(shadow_map.view)
+                    .sampler(shadow_sampler);
+
+                let writes = [
+                    ash::vk::WriteDescriptorSet::default()
+                        .dst_set(d_set)
+                        .dst_binding(0)
+                        .descriptor_type(ash::vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .image_info(std::slice::from_ref(&img_info_albedo)),
+                    ash::vk::WriteDescriptorSet::default()
+                        .dst_set(d_set)
+                        .dst_binding(1)
+                        .descriptor_type(ash::vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .image_info(std::slice::from_ref(&img_info_albedo)),
+                    ash::vk::WriteDescriptorSet::default()
+                        .dst_set(d_set)
+                        .dst_binding(2)
+                        .descriptor_type(ash::vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .image_info(std::slice::from_ref(&img_info_shadow)),
+                ];
+
+                unsafe {
+                    context.device.update_descriptor_sets(&writes, &[]);
+                }
+                d_set
+            };
 
             let pipeline_2d = Pipeline2D::new_with_depth(
                 &context.device,
@@ -582,6 +793,10 @@ impl ApplicationHandler for App {
             self.window = Some(window);
             self.context = Some(context);
             self.depth_buffer = Some(depth_buffer);
+            self.shadow_map = Some(shadow_map);
+            self.shadow_pipeline = Some(shadow_pipeline);
+            self.shadow_sampler = Some(shadow_sampler);
+            self.shadow_descriptor_set = Some(shadow_descriptor_set);
             self.pipeline_3d = Some(pipeline_3d);
             self.pipeline_2d = Some(pipeline_2d);
             self.atlas = Some(atlas);

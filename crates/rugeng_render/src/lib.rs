@@ -10,6 +10,7 @@ pub mod icons;
 pub mod mesh;
 pub mod pipeline_2d;
 pub mod pipeline_3d;
+pub mod shadow;
 pub mod texture;
 pub mod theme;
 
@@ -24,6 +25,7 @@ pub use pipeline_2d::{
     Pipeline2D, QuadInstance, BUFFER_SIZE_PER_FRAME, MAX_QUADS_PER_FRAME, QUAD_INSTANCE_SIZE,
 };
 pub use pipeline_3d::{Pipeline3D, PushConstants3D};
+pub use shadow::{create_shadow_sampler, ShadowPipeline3D, ShadowPushConstants};
 pub use texture::{decode_png, AtlasSubRegion, TextureAtlas};
 pub use theme::Theme;
 

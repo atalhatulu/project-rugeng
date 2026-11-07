@@ -388,8 +388,58 @@ impl App {
                         font::draw_text(instances, lbl, mb_x + 6.0, c3d_y + 132.0, 1.0, text_norm);
                         mb_x += 52.0;
                     }
+                    cur_insp_y += c3d_h + 8.0;
                 }
-                cur_insp_y += c3d_h + 8.0;
+
+                // BİLEŞEN: [ Directional Light & Shadow ]
+                let sl_h = 76.0;
+                let sl_y = cur_insp_y;
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, sl_y],
+                    [right_w - 16.0, sl_h],
+                    theme.card_bg,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, sl_y],
+                    [right_w - 16.0, 20.0],
+                    theme.card_header,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, sl_y],
+                    [right_w - 16.0, 1.0],
+                    theme.border_subtle,
+                    0,
+                ));
+                font::draw_text(
+                    instances,
+                    "v Directional Light & Shadow (PCF)",
+                    insp_x + 14.0,
+                    sl_y + 4.0,
+                    1.25,
+                    [255, 215, 0, 255],
+                );
+                font::draw_text(
+                    instances,
+                    &format!(
+                        "Dir: ({:.1}, {:.1}, {:.1}) | Res: 2048x2048",
+                        self.sun.direction.x, self.sun.direction.y, self.sun.direction.z
+                    ),
+                    insp_x + 14.0,
+                    sl_y + 26.0,
+                    1.1,
+                    text_norm,
+                );
+                font::draw_text(
+                    instances,
+                    "Filter: PCF 3x3 | Slope Bias: 0.0025 | D32_SFLOAT",
+                    insp_x + 14.0,
+                    sl_y + 48.0,
+                    1.05,
+                    godot_blue,
+                );
+                cur_insp_y += sl_h + 8.0;
             }
 
             // BİLEŞEN 1: [ Transform 2D ]

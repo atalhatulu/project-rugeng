@@ -11,17 +11,17 @@ use crate::mesh::Vertex3D;
 pub const VERT_3D_SPV: &[u8] = include_bytes!("../shaders/mesh_3d.vert.spv");
 pub const FRAG_3D_SPV: &[u8] = include_bytes!("../shaders/mesh_3d.frag.spv");
 
-/// Push Constants (208 bayt: mat4 vp, mat4 model, vec4 light_dir_amb, vec4 light_col, vec4 cam_pos, vec4 pbr_params)
+/// Push Constants (256 bayt: mat4 vp, mat4 model, mat4 light_space, vec4 light_dir_amb, vec4 light_col, vec4 cam_pos, vec4 pbr_params)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct PushConstants3D {
     pub view_proj: [f32; 16],            // 64 bayt
     pub model: [f32; 16],                // 64 bayt
+    pub light_space: [f32; 16],          // 64 bayt (Işık uzayı VP matrisi)
     pub light_dir_ambient: [f32; 4],     // 16 bayt (xyz: dir, w: ambient)
     pub light_color_shininess: [f32; 4], // 16 bayt (xyz: color, w: shininess/pbr)
     pub camera_pos_flags: [f32; 4],      // 16 bayt (xyz: pos, w: has_texture)
-    pub pbr_params: [f32; 4],            // 16 bayt (x: roughness, y: metallic, zw: unused)
-    pub _padding: [f32; 4],              // 16 bayt hizalama dolgusu (toplam 208 bayt)
+    pub pbr_params: [f32; 4], // 16 bayt (x: roughness, y: metallic, z: has_mr_texture, w: shadow_bias)
 }
 
 pub struct Pipeline3D {
@@ -40,7 +40,7 @@ impl Pipeline3D {
         default_image_view: vk::ImageView,
         default_sampler: vk::Sampler,
     ) -> Result<Self, String> {
-        // 1. Descriptor Set Layout (Binding 0: albedo texture, Binding 1: metallic-roughness texture)
+        // 1. Descriptor Set Layout (Binding 0: albedo texture, Binding 1: metallic-roughness texture, Binding 2: shadow map)
         let bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(0)
@@ -49,6 +49,11 @@ impl Pipeline3D {
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
             vk::DescriptorSetLayoutBinding::default()
                 .binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(2)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
@@ -63,7 +68,7 @@ impl Pipeline3D {
                 .map_err(|e| format!("DescriptorSetLayout3D olusturulamadi: {e}"))?
         };
 
-        // 2. Pipeline Layout (Push Constant: 208 bayt)
+        // 2. Pipeline Layout (Push Constant: 256 bayt)
         let push_constant_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
@@ -252,7 +257,7 @@ impl Pipeline3D {
                 .map_err(|e| format!("DescriptorSet3D allocate basarisiz: {e}"))?[0]
         };
 
-        // Varsayılan doku bilgisini bağla (Binding 0: Albedo, Binding 1: Metallic-Roughness)
+        // Varsayılan doku bilgisini bağla (Binding 0: Albedo, Binding 1: Metallic-Roughness, Binding 2: Shadow Map)
         let image_info = vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .image_view(default_image_view)
@@ -267,6 +272,11 @@ impl Pipeline3D {
             vk::WriteDescriptorSet::default()
                 .dst_set(dummy_descriptor_set)
                 .dst_binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(std::slice::from_ref(&image_info)),
+            vk::WriteDescriptorSet::default()
+                .dst_set(dummy_descriptor_set)
+                .dst_binding(2)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(std::slice::from_ref(&image_info)),
         ];
@@ -319,9 +329,11 @@ impl Pipeline3D {
 
             // Push Constants hazırla
             let vp = camera.view_projection();
+            let light_space = sun.light_space_matrix(glam::Vec3::ZERO, 15.0, 12.0, 0.1, 40.0);
             let push_data = PushConstants3D {
                 view_proj: vp.to_cols_array(),
                 model: model_matrix.to_cols_array(),
+                light_space: light_space.to_cols_array(),
                 light_dir_ambient: [
                     sun.direction.x,
                     sun.direction.y,
@@ -335,8 +347,7 @@ impl Pipeline3D {
                     camera.eye.z,
                     if has_texture { 1.0 } else { 0.0 },
                 ],
-                pbr_params: [0.5, 0.0, 0.0, 0.0],
-                _padding: [0.0; 4],
+                pbr_params: [0.5, 0.0, 0.0, 0.0025],
             };
 
             let push_bytes = bytemuck::bytes_of(&push_data);
@@ -481,9 +492,11 @@ impl Pipeline3D {
             device.cmd_set_scissor(cmd, 0, &[scissor]);
 
             let vp = camera.view_projection();
+            let light_space = sun.light_space_matrix(glam::Vec3::ZERO, 15.0, 12.0, 0.1, 40.0);
             let push_data = PushConstants3D {
                 view_proj: vp.to_cols_array(),
                 model: model_matrix.to_cols_array(),
+                light_space: light_space.to_cols_array(),
                 light_dir_ambient: [
                     sun.direction.x,
                     sun.direction.y,
@@ -501,9 +514,8 @@ impl Pipeline3D {
                     roughness,
                     metallic,
                     if has_mr_texture { 1.0 } else { 0.0 },
-                    0.0,
+                    0.0025,
                 ],
-                _padding: [0.0; 4],
             };
 
             let push_bytes = bytemuck::bytes_of(&push_data);

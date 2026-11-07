@@ -517,6 +517,7 @@ name = "demo_3d"
 version = "0.1.0"
 dependencies = [
  "ash",
+ "bytemuck",
  "glam",
  "rugeng_assets",
  "rugeng_core",
