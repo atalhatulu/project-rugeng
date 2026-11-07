@@ -384,6 +384,7 @@ impl App {
                         ("[3] 3D Piramit (Pyramid)", "", "add_pyramid_3d"),
                         ("[3] 3D Kapsul (Capsule)", "", "add_capsule_3d"),
                         ("[3] 3D Sprite (2.5D)", "", "add_sprite_3d"),
+                        ("[M] glTF 3D Model (GLB)", "", "add_gltf_sample"),
                     ],
                 ),
                 OpenMenu::Project => (

@@ -51,6 +51,7 @@ struct App {
     gpu_cube: Option<GpuMesh3D>,
     gpu_sphere: Option<GpuMesh3D>,
     gpu_plane: Option<GpuMesh3D>,
+    gpu_gltf: Option<GpuMesh3D>,
 
     objects: Vec<DemoObject>,
     camera: Camera3D,
@@ -97,6 +98,9 @@ impl Drop for App {
                 m.destroy(&ctx.device, &mut alloc);
             }
             if let Some(mut m) = self.gpu_plane.take() {
+                m.destroy(&ctx.device, &mut alloc);
+            }
+            if let Some(mut m) = self.gpu_gltf.take() {
                 m.destroy(&ctx.device, &mut alloc);
             }
             if let Some(mut db) = self.depth_buffer.take() {
@@ -171,6 +175,16 @@ impl App {
             });
         }
 
+        // 5. glTF 2.0 PBR Modeli (Merkez sağda)
+        objects.push(DemoObject {
+            transform: Transform3D::new(Vec3::new(0.0, 2.5, 0.0), Quat::IDENTITY, Vec3::splat(1.8)),
+            rotation_speed: Vec3::new(0.0, 1.5, 0.5),
+            mesh_idx: 3, // gltf
+            aabb: AABB3D::from_center_half_extents(Vec3::ZERO, Vec3::splat(1.0)),
+            sphere: BoundingSphere::new(Vec3::ZERO, 1.2),
+            is_child: false,
+        });
+
         Self {
             window: None,
             context: None,
@@ -181,6 +195,7 @@ impl App {
             gpu_cube: None,
             gpu_sphere: None,
             gpu_plane: None,
+            gpu_gltf: None,
             objects,
             camera: Camera3D::new(
                 Vec3::new(0.0, 3.5, 9.0),
@@ -360,7 +375,11 @@ impl App {
             let gpu_mesh = match obj.mesh_idx {
                 0 => self.gpu_cube.as_ref().unwrap(),
                 1 => self.gpu_sphere.as_ref().unwrap(),
-                _ => self.gpu_plane.as_ref().unwrap(),
+                2 => self.gpu_plane.as_ref().unwrap(),
+                _ => self
+                    .gpu_gltf
+                    .as_ref()
+                    .unwrap_or_else(|| self.gpu_cube.as_ref().unwrap()),
             };
 
             p3d.draw_mesh(
@@ -536,6 +555,30 @@ impl ApplicationHandler for App {
                 GpuMesh3D::from_mesh(&context.device, Arc::clone(&context.allocator), &plane_mesh)
                     .expect("Plane GPU mesh yuklenemedi");
 
+            let gpu_gltf = {
+                let sample_path = "assets/models/sample.glb";
+                if let Ok(model) = rugeng_assets::GltfModel::from_file(sample_path) {
+                    if let Some(sub) = model.submeshes.first() {
+                        let vertices: Vec<rugeng_render::mesh::Vertex3D> = sub
+                            .vertices
+                            .iter()
+                            .map(|v| {
+                                rugeng_render::mesh::Vertex3D::new(
+                                    v.position, v.normal, v.uv, v.color,
+                                )
+                            })
+                            .collect();
+                        let mesh = rugeng_render::mesh::Mesh3D::new(vertices, sub.indices.clone());
+                        GpuMesh3D::from_mesh(&context.device, Arc::clone(&context.allocator), &mesh)
+                            .ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
             self.window = Some(window);
             self.context = Some(context);
             self.depth_buffer = Some(depth_buffer);
@@ -545,6 +588,7 @@ impl ApplicationHandler for App {
             self.gpu_cube = Some(gpu_cube);
             self.gpu_sphere = Some(gpu_sphere);
             self.gpu_plane = Some(gpu_plane);
+            self.gpu_gltf = gpu_gltf;
         }
     }
 

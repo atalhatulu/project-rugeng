@@ -90,6 +90,12 @@ impl App {
                             "pyramid" => self.gpu_pyramid.as_ref(),
                             "capsule" => self.gpu_capsule.as_ref(),
                             "sprite_3d" => self.gpu_sprite_3d.as_ref(),
+                            name if name == "gltf_sample"
+                                || name.starts_with("SampleTriangleMesh")
+                                || name.contains("submesh") =>
+                            {
+                                self.gpu_gltf_sample.as_ref().or(self.gpu_cube.as_ref())
+                            }
                             _ => self.gpu_cube.as_ref(),
                         };
 

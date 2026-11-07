@@ -14,14 +14,14 @@
 | **`rugeng_core`** | Birim Testleri (`src/lib.rs`) | **41** | Başarılı (Yeşil) |
 | **`rugeng_core`** | Entegrasyon: Counting Allocator (`tests/counting_allocator_churn.rs`) | **1** | Başarılı (Yeşil) |
 | **`rugeng_core`** | Entegrasyon: Loom Arena (`tests/loom_arena.rs`) | **1** | Başarılı (Yeşil) |
-| **`rugeng_editor`** | Birim & UI/Dock Testleri (`src/main.rs`) | **37** | Başarılı (Yeşil) |
+| **`rugeng_editor`** | Birim & UI/Dock Testleri (`src/main.rs`) | **38** | Başarılı (Yeşil) |
 | **`rugeng_physics`** | Birim Testleri (`src/lib.rs`) | **20** | Başarılı (Yeşil) |
 | **`rugeng_render`** | Birim & Font/Mesh/Shader Testleri (`src/lib.rs`) | **19** | Başarılı (Yeşil) |
 | **`rugeng_scheduler`** | Birim & ThreadPool Testleri (`src/lib.rs`) | **12** | Başarılı (Yeşil) |
 | **`rugeng_scheduler`** | Eşzamanlılık Doğrulaması (`tests/loom_scheduler.rs`) | **2** | Başarılı (Yeşil) |
-| **`rugeng_assets`** | VFS, Mmap & Sürümleme Testleri (`src/lib.rs`) | **11** | Başarılı (Yeşil) |
+| **`rugeng_assets`** | VFS, Mmap, Sürümleme & glTF Testleri (`src/lib.rs`) | **15** | Başarılı (Yeşil) |
 | **`rugeng_script`** | Luau Sandbox & SoA Testleri (`src/lib.rs`) | **9** | Başarılı (Yeşil) |
-| **TOPLAM DOĞRULANMIŞ TEST** | Workspace Genel | **153** | **TÜMÜ GEÇTİ (0 HATA)** |
+| **TOPLAM DOĞRULANMIŞ TEST** | Workspace Genel | **158** | **TÜMÜ GEÇTİ (0 HATA)** |
 
 ---
 

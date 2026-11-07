@@ -122,6 +122,7 @@ pub(crate) struct App {
     pub(crate) gpu_capsule: Option<GpuMesh3D>,
     pub(crate) gpu_sprite_3d: Option<GpuMesh3D>,
     pub(crate) gpu_grid: Option<GpuMesh3D>,
+    pub(crate) gpu_gltf_sample: Option<GpuMesh3D>,
     pub(crate) sun: DirectionalLight,
     pub(crate) ambient: AmbientLight,
     pub(crate) context: Option<VulkanContext>,
@@ -174,6 +175,9 @@ impl Drop for App {
                 m.destroy(&ctx.device, &mut alloc);
             }
             if let Some(mut m) = self.gpu_grid.take() {
+                m.destroy(&ctx.device, &mut alloc);
+            }
+            if let Some(mut m) = self.gpu_gltf_sample.take() {
                 m.destroy(&ctx.device, &mut alloc);
             }
             if let Some(mut db) = self.depth_buffer.take() {
@@ -397,6 +401,7 @@ impl App {
             gpu_capsule: None,
             gpu_sprite_3d: None,
             gpu_grid: None,
+            gpu_gltf_sample: None,
             sun: DirectionalLight::default(),
             ambient: AmbientLight::default(),
             atlas: None,
@@ -552,6 +557,30 @@ impl ApplicationHandler for App {
                 GpuMesh3D::from_mesh(&context.device, Arc::clone(&context.allocator), &grid_mesh)
                     .ok();
 
+            let gpu_gltf_sample = {
+                let sample_path = "assets/models/sample.glb";
+                if let Ok(gltf_model) = rugeng_assets::GltfModel::from_file(sample_path) {
+                    if let Some(sub) = gltf_model.submeshes.first() {
+                        let vertices: Vec<rugeng_render::mesh::Vertex3D> = sub
+                            .vertices
+                            .iter()
+                            .map(|v| {
+                                rugeng_render::mesh::Vertex3D::new(
+                                    v.position, v.normal, v.uv, v.color,
+                                )
+                            })
+                            .collect();
+                        let mesh = rugeng_render::mesh::Mesh3D::new(vertices, sub.indices.clone());
+                        GpuMesh3D::from_mesh(&context.device, Arc::clone(&context.allocator), &mesh)
+                            .ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
             self.window = Some(window);
             self.context = Some(context);
             self.depth_buffer = Some(depth_buffer);
@@ -567,6 +596,7 @@ impl ApplicationHandler for App {
             self.gpu_capsule = gpu_capsule;
             self.gpu_sprite_3d = gpu_sprite_3d;
             self.gpu_grid = gpu_grid;
+            self.gpu_gltf_sample = gpu_gltf_sample;
             self.last_frame_time = Instant::now();
             self.fps_timer = Instant::now();
         }
@@ -2867,5 +2897,27 @@ mod tests {
         // Metnin çok sağına tıklama -> metin uzunluğuna (10) kenetlenmeli
         app.handle_mouse_click(glam::Vec2::new(200.0, row_y + 10.0), 1280.0, 720.0, false);
         assert_eq!(app.editor.renaming.as_ref().unwrap().caret, 10);
+    }
+
+    #[test]
+    fn test_import_gltf_scene_and_pbr_mapping() {
+        let mut app = App::new();
+        let sample_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/models/sample.glb"
+        );
+        let ents = app
+            .import_gltf_scene(sample_path)
+            .expect("sample.glb sahneye aktarılabilmeli");
+        assert_eq!(ents.len(), 1, "1 submesh varlığı oluşturulmalı");
+
+        let e = ents[0];
+        assert!(app.registry.has::<rugeng_core::Transform3D>(e));
+        assert!(app.registry.has::<rugeng_core::Mesh3DComponent>(e));
+
+        let m3 = app.registry.get::<rugeng_core::Mesh3DComponent>(e).unwrap();
+        assert_eq!(m3.color, [0.2, 0.8, 0.4, 1.0]);
+        assert!((m3.roughness - 0.3).abs() < 1e-4);
+        assert!((m3.metallic - 0.7).abs() < 1e-4);
     }
 }

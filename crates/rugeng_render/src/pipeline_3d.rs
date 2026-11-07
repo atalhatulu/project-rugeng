@@ -40,15 +40,21 @@ impl Pipeline3D {
         default_image_view: vk::ImageView,
         default_sampler: vk::Sampler,
     ) -> Result<Self, String> {
-        // 1. Descriptor Set Layout (Binding 0: texture sampler2D)
-        let binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+        // 1. Descriptor Set Layout (Binding 0: albedo texture, Binding 1: metallic-roughness texture)
+        let bindings = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        ];
 
-        let layout_info =
-            vk::DescriptorSetLayoutCreateInfo::default().bindings(std::slice::from_ref(&binding));
+        let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
 
         // SAFETY: Descriptor set layout oluşturulması
         let descriptor_set_layout = unsafe {
@@ -246,20 +252,27 @@ impl Pipeline3D {
                 .map_err(|e| format!("DescriptorSet3D allocate basarisiz: {e}"))?[0]
         };
 
-        // Varsayılan doku bilgisini bağla
+        // Varsayılan doku bilgisini bağla (Binding 0: Albedo, Binding 1: Metallic-Roughness)
         let image_info = vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .image_view(default_image_view)
             .sampler(default_sampler);
 
-        let write = vk::WriteDescriptorSet::default()
-            .dst_set(dummy_descriptor_set)
-            .dst_binding(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(std::slice::from_ref(&image_info));
+        let writes = [
+            vk::WriteDescriptorSet::default()
+                .dst_set(dummy_descriptor_set)
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(std::slice::from_ref(&image_info)),
+            vk::WriteDescriptorSet::default()
+                .dst_set(dummy_descriptor_set)
+                .dst_binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(std::slice::from_ref(&image_info)),
+        ];
 
         unsafe {
-            device.update_descriptor_sets(&[write], &[]);
+            device.update_descriptor_sets(&writes, &[]);
         }
 
         Ok(Self {
@@ -401,13 +414,50 @@ impl Pipeline3D {
         vp_w: f32,
         vp_h: f32,
     ) {
+        self.draw_mesh_pbr_viewport_ext(
+            device,
+            cmd,
+            camera,
+            mesh,
+            model_matrix,
+            sun,
+            ambient,
+            roughness,
+            metallic,
+            has_texture,
+            false,
+            None,
+            vp_x,
+            vp_y,
+            vp_w,
+            vp_h,
+        );
+    }
+
+    /// PBR materyal ve doku seti ile detaylı Viewport / Scissor çizimi
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_mesh_pbr_viewport_ext(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        camera: &Camera3D,
+        mesh: &GpuMesh3D,
+        model_matrix: Mat4,
+        sun: &DirectionalLight,
+        ambient: &AmbientLight,
+        roughness: f32,
+        metallic: f32,
+        has_texture: bool,
+        has_mr_texture: bool,
+        descriptor_set: Option<vk::DescriptorSet>,
+        vp_x: f32,
+        vp_y: f32,
+        vp_w: f32,
+        vp_h: f32,
+    ) {
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 
-            // Vulkan NDC'de Y ekseni aşağı doğrudur (+1 ekranın altı).
-            // Dünyadaki +Y yukarı ekseninin ekranda da yukarı olması için
-            // Vulkan 1.1 standardı olan negatif viewport yüksekliği (height: -vp_h, y: vp_y + vp_h)
-            // kullanılır. Winding order'ın korunması için rasterizer front_face CLOCKWISE yapılır.
             let viewport = vk::Viewport {
                 x: vp_x,
                 y: vp_y + vp_h,
@@ -447,7 +497,12 @@ impl Pipeline3D {
                     camera.eye.z,
                     if has_texture { 1.0 } else { 0.0 },
                 ],
-                pbr_params: [roughness, metallic, 0.0, 0.0],
+                pbr_params: [
+                    roughness,
+                    metallic,
+                    if has_mr_texture { 1.0 } else { 0.0 },
+                    0.0,
+                ],
                 _padding: [0.0; 4],
             };
 
@@ -460,12 +515,13 @@ impl Pipeline3D {
                 push_bytes,
             );
 
+            let active_set = descriptor_set.unwrap_or(self.dummy_descriptor_set);
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.layout,
                 0,
-                &[self.dummy_descriptor_set],
+                &[active_set],
                 &[],
             );
 

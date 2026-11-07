@@ -1,6 +1,7 @@
 #version 450
 
 layout(set = 0, binding = 0) uniform sampler2D u_texture;
+layout(set = 0, binding = 1) uniform sampler2D u_metallic_roughness;
 
 layout(push_constant) uniform PushConstants {
     mat4 view_proj;
@@ -8,7 +9,7 @@ layout(push_constant) uniform PushConstants {
     vec4 light_dir_ambient;   // xyz: light_dir, w: ambient_intensity
     vec4 light_color_pbr;     // xyz: light_color, w: specular_shininess / pbr_flag
     vec4 camera_pos_flags;    // xyz: camera_pos, w: has_texture (1.0 or 0.0)
-    vec4 pbr_params;          // x: roughness (0.04..1.0), y: metallic (0.0..1.0), zw: unused
+    vec4 pbr_params;          // x: roughness (0.04..1.0), y: metallic (0.0..1.0), z: has_mr_texture (1.0 or 0.0), w: unused
     vec4 reserved[7];         // Toplam 208 bayt hizalama
 } pc;
 
@@ -76,6 +77,13 @@ void main() {
     vec3 albedo = albedo_sample.rgb;
     float roughness = clamp(pc.pbr_params.x, 0.04, 1.0);
     float metallic = clamp(pc.pbr_params.y, 0.0, 1.0);
+
+    // glTF 2.0 PBR standardı: G kanalı = Roughness, B kanalı = Metallic
+    if (pc.pbr_params.z > 0.5) {
+        vec4 mr_sample = texture(u_metallic_roughness, in_uv);
+        roughness = clamp(roughness * mr_sample.g, 0.04, 1.0);
+        metallic = clamp(metallic * mr_sample.b, 0.0, 1.0);
+    }
 
     // F0 diyalektrikler için varsayılan 0.04, metaller için albedo değeri
     vec3 F0 = vec3(0.04);

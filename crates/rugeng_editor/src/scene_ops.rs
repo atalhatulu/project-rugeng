@@ -786,6 +786,24 @@ impl App {
                     Mesh3DComponent::with_pbr("sprite_3d", [1.0, 1.0, 1.0, 1.0], 0.9, 0.0),
                 );
             }
+            "gltf_sample" => {
+                let cam_eye = self.editor.camera_3d.eye;
+                let cam_fwd = self.editor.camera_3d.forward();
+                let spawn_3d = cam_eye + cam_fwd * 4.0;
+                self.registry.emplace(
+                    e,
+                    Transform3D {
+                        translation: spawn_3d,
+                        rotation: glam::Quat::IDENTITY,
+                        scale: glam::Vec3::ONE,
+                    },
+                );
+                self.registry.emplace(
+                    e,
+                    Mesh3DComponent::with_pbr("gltf_sample", [0.2, 0.8, 0.4, 1.0], 0.3, 0.7),
+                );
+                self.registry.emplace(e, NodeName::new("GltfModel_Sample"));
+            }
             _ => {
                 tr.size = Vec2::new(36.0, 36.0);
                 self.registry.emplace(e, tr);
@@ -1609,5 +1627,71 @@ impl App {
             ),
         });
         self.audio.play("sfx_explosion");
+    }
+
+    /// glTF/GLB dosyasını sahneye aktarır ve hiyerarşik 3D varlıklar oluşturur.
+    pub fn import_gltf_scene(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Vec<Entity>, String> {
+        let model = rugeng_assets::GltfModel::from_file(path.as_ref())?;
+        let mut created_entities = Vec::new();
+
+        let cam_eye = self.editor.camera_3d.eye;
+        let cam_fwd = self.editor.camera_3d.forward();
+        let base_spawn = cam_eye + cam_fwd * 5.0;
+
+        for (idx, submesh) in model.submeshes.iter().enumerate() {
+            let e = self.registry.create();
+            let mut roughness = 0.5f32;
+            let mut metallic = 0.0f32;
+            let mut color = [0.8, 0.8, 0.8, 1.0];
+
+            if let Some(mat_idx) = submesh.material_index {
+                if let Some(mat) = model.materials.get(mat_idx) {
+                    roughness = mat.roughness_factor;
+                    metallic = mat.metallic_factor;
+                    color = mat.base_color_factor;
+                }
+            }
+
+            self.registry.emplace(
+                e,
+                Transform3D {
+                    translation: base_spawn,
+                    rotation: glam::Quat::IDENTITY,
+                    scale: glam::Vec3::ONE,
+                },
+            );
+
+            let mesh_name = if submesh.name.is_empty() {
+                format!("{}_submesh_{idx}", model.name)
+            } else {
+                submesh.name.clone()
+            };
+
+            self.registry.emplace(
+                e,
+                Mesh3DComponent::with_pbr(mesh_name.clone(), color, roughness, metallic),
+            );
+            self.registry.emplace(e, NodeName::new(mesh_name));
+
+            created_entities.push(e);
+        }
+
+        if let Some(&first) = created_entities.first() {
+            self.editor.selected_entity = Some(first);
+        }
+        self.editor.is_scene_dirty = true;
+        self.editor.logs.push(LogMessage {
+            level: "INFO",
+            text: format!(
+                "glTF modeli ice aktarildi: {} ({} submesh)",
+                model.name,
+                created_entities.len()
+            ),
+        });
+
+        Ok(created_entities)
     }
 }

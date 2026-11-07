@@ -270,6 +270,14 @@ impl App {
                         "add_pyramid_3d" => self.spawn_preset_entity("pyramid_3d"),
                         "add_capsule_3d" => self.spawn_preset_entity("capsule_3d"),
                         "add_sprite_3d" => self.spawn_preset_entity("sprite_3d"),
+                        "add_gltf_sample" => {
+                            let path = "assets/models/sample.glb";
+                            if std::path::Path::new(path).exists() {
+                                let _ = self.import_gltf_scene(path);
+                            } else {
+                                self.spawn_preset_entity("gltf_sample");
+                            }
+                        }
                         "export" => {
                             let path = self.editor.current_scene_path.clone();
                             self.save_current_scene(&path);

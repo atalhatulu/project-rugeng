@@ -32,6 +32,8 @@ pub struct Mesh3D {
     pub indices: Vec<u32>,
     pub aabb: AABB3D,
     pub bounding_sphere: BoundingSphere,
+    pub material_index: Option<usize>,
+    pub pbr_factors: Option<[f32; 4]>, // [roughness, metallic, _, _]
 }
 
 impl Mesh3D {
@@ -41,9 +43,22 @@ impl Mesh3D {
             indices,
             aabb: AABB3D::default(),
             bounding_sphere: BoundingSphere::default(),
+            material_index: None,
+            pbr_factors: None,
         };
         mesh.recompute_bounds();
         mesh
+    }
+
+    pub fn with_material(
+        mut self,
+        material_index: Option<usize>,
+        roughness: f32,
+        metallic: f32,
+    ) -> Self {
+        self.material_index = material_index;
+        self.pbr_factors = Some([roughness, metallic, 0.0, 0.0]);
+        self
     }
 
     /// Sınırlayıcı kutu (AABB) ve sınırlayıcı küreyi yeniden hesaplar.
