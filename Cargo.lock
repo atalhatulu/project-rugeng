@@ -1769,6 +1769,7 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "glam",
+ "rugeng_assets",
  "rugeng_core",
  "rugeng_physics",
  "rugeng_render",

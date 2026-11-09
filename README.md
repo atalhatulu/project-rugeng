@@ -4,7 +4,7 @@ Rust ve Vulkan 1.3/1.4 ile geliştirilen, yüksek performanslı, veri odaklı (d
 
 ## Genel Durum ve Kalite Metrikleri
 
-- **Doğrulanmış Test Sayısı:** **168 Test (Tümü Yeşil)**
+- **Doğrulanmış Test Sayısı:** **170 Test (Tümü Yeşil)**
 - **Test Baseline Raporu:** [`docs/TEST_BASELINE.md`](docs/TEST_BASELINE.md)
 - **Clippy:** 0 Uyarı (`cargo clippy --workspace --all-targets -- -D warnings`)
 - **Format:** Temiz (`cargo fmt --check`)

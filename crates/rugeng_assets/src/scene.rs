@@ -90,6 +90,45 @@ impl VersionedScene {
         serde_json::to_string_pretty(self).map_err(|e| format!("JSON serileştirme hatası: {e}"))
     }
 
+    /// İkili (Binary) formata kodlar. Başında "RUGENG_SCENE_BIN\0" sihirli baytı bulunur.
+    pub fn to_binary(&self) -> Result<Vec<u8>, String> {
+        let json_bytes =
+            serde_json::to_vec(self).map_err(|e| format!("Binary sahne paketleme hatası: {e}"))?;
+        let mut out = Vec::with_capacity(16 + json_bytes.len());
+        out.extend_from_slice(b"RUGENG_SCN_BIN\0");
+        out.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&json_bytes);
+        Ok(out)
+    }
+
+    /// İkili (Binary) formattan çözer.
+    pub fn from_binary(bytes: &[u8]) -> Result<Self, String> {
+        const MAGIC: &[u8] = b"RUGENG_SCN_BIN\0";
+        if bytes.len() < 19 || &bytes[..15] != MAGIC {
+            return Err("Gecersiz ikili sahne sihirli basligi".to_string());
+        }
+        let len_bytes = [bytes[15], bytes[16], bytes[17], bytes[18]];
+        let len = u32::from_le_bytes(len_bytes) as usize;
+        if bytes.len() < 19 + len {
+            return Err("Eksik veya bozuk ikili sahne verisi".to_string());
+        }
+        let json_slice = &bytes[19..19 + len];
+        let json_str = std::str::from_utf8(json_slice)
+            .map_err(|e| format!("Gecersiz UTF-8 sahne verisi: {e}"))?;
+        Self::from_json(json_str)
+    }
+
+    /// Otomatik tespit: Dosya baytları ikili ise binary, değilse JSON olarak ayrıştırır.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.starts_with(b"RUGENG_SCN_BIN\0") {
+            Self::from_binary(bytes)
+        } else {
+            let json_str = std::str::from_utf8(bytes)
+                .map_err(|e| format!("Sahne verisi UTF-8 olarak okunamadi: {e}"))?;
+            Self::from_json(json_str)
+        }
+    }
+
     /// RugengCore `SceneData` yapısına dönüştürür
     pub fn to_core_scene(&self) -> SceneData {
         SceneData {
@@ -148,6 +187,17 @@ mod tests {
         scene.environment.author = "TestAuthor".to_string();
         let json = scene.to_json().unwrap();
         let decoded = VersionedScene::from_json(&json).unwrap();
+        assert_eq!(scene, decoded);
+    }
+
+    #[test]
+    fn test_v2_binary_roundtrip() {
+        let mut scene = VersionedScene::new("V2BinaryTest");
+        scene.environment.author = "BinaryAuthor".to_string();
+        let bin = scene
+            .to_binary()
+            .expect("Binary serilestirme basarili olmali");
+        let decoded = VersionedScene::from_bytes(&bin).expect("Binary cozumleme basarili olmali");
         assert_eq!(scene, decoded);
     }
 }

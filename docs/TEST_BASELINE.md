@@ -19,9 +19,9 @@
 | **`rugeng_render`** | Birim, Font, Mesh, PBR & Gölge Testleri (`src/lib.rs`) | **21** | Başarılı (Yeşil) |
 | **`rugeng_scheduler`** | Birim & ThreadPool Testleri (`src/lib.rs`) | **12** | Başarılı (Yeşil) |
 | **`rugeng_scheduler`** | Eşzamanlılık Doğrulaması (`tests/loom_scheduler.rs`) | **2** | Başarılı (Yeşil) |
-| **`rugeng_assets`** | VFS, Mmap, Sürümleme & glTF Testleri (`src/lib.rs`) | **16** | Başarılı (Yeşil) |
+| **`rugeng_assets`** | VFS, Mmap, Sürümleme, glTF & Pak Testleri (`src/lib.rs`) | **18** | Başarılı (Yeşil) |
 | **`rugeng_script`** | Luau Sandbox & SoA Testleri (`src/lib.rs`) | **9** | Başarılı (Yeşil) |
-| **TOPLAM DOĞRULANMIŞ TEST** | Workspace Genel | **168** | **TÜMÜ GEÇTİ (0 HATA)** |
+| **TOPLAM DOĞRULANMIŞ TEST** | Workspace Genel | **170** | **TÜMÜ GEÇTİ (0 HATA)** |
 
 ---
 

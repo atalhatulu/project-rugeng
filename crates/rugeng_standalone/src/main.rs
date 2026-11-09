@@ -69,7 +69,7 @@ impl Drop for App {
 }
 
 impl App {
-    fn new(auto_exit_frames: Option<u64>) -> Self {
+    fn new(auto_exit_frames: Option<u64>, custom_scene_path: Option<String>) -> Self {
         let arena = FrameArena::new(64 * 1024 * 1024).expect("FrameArena tahsis edilemedi");
         let mut registry = Registry::new();
         registry.register_component::<Transform2D>();
@@ -103,18 +103,54 @@ impl App {
             fps_timer: Instant::now(),
             frame_count: 0,
             score: 0,
-            scene_name: "scenes/main.scene".to_string(),
+            scene_name: custom_scene_path
+                .clone()
+                .unwrap_or_else(|| "scenes/main.scene".to_string()),
             auto_exit_frames,
         };
 
-        app.load_or_create_default_scene();
+        app.load_or_create_scene(custom_scene_path.as_deref());
         app
     }
 
-    fn load_or_create_default_scene(&mut self) {
-        if let Ok(scene) = SceneData::load_from_file("scenes/main.scene") {
+    fn load_or_create_scene(&mut self, custom_path: Option<&str>) {
+        let path = custom_path.unwrap_or("scenes/main.scene");
+
+        // 1. Eğer .pak paketi ise PakReader ile sahneyi oku
+        let loaded_scene = if path.ends_with(".pak") {
+            if let Ok(pak) = rugeng_assets::PakReader::from_file(path) {
+                if let Some(scene_bytes) = pak.get_file("scenes/main.scene").or_else(|| {
+                    pak.list_files()
+                        .iter()
+                        .find(|f| f.ends_with(".scene"))
+                        .and_then(|f| pak.get_file(f))
+                }) {
+                    println!(
+                        "[Standalone] Pak arşivinden sahne bulundu ({} bayt).",
+                        scene_bytes.len()
+                    );
+                    rugeng_assets::VersionedScene::from_bytes(scene_bytes)
+                        .map(|v| v.to_core_scene())
+                        .ok()
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else if let Ok(bytes) = std::fs::read(path) {
+            rugeng_assets::VersionedScene::from_bytes(&bytes)
+                .map(|v| v.to_core_scene())
+                .ok()
+                .or_else(|| SceneData::load_from_file(path).ok())
+        } else {
+            None
+        };
+
+        if let Some(scene) = loaded_scene {
             println!(
-                "[Standalone] 'scenes/main.scene' yuklendi ({} varlik).",
+                "[Standalone] '{}' yuklendi ({} varlik).",
+                path,
                 scene.entities.len()
             );
             self.scene_name = scene.name;
@@ -722,10 +758,14 @@ impl ApplicationHandler for App {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut auto_exit = None;
+    let mut scene_path = None;
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--test-frames" && i + 1 < args.len() {
             auto_exit = args[i + 1].parse::<u64>().ok();
+            i += 1;
+        } else if args[i] == "--scene" && i + 1 < args.len() {
+            scene_path = Some(args[i + 1].clone());
             i += 1;
         }
         i += 1;
@@ -737,6 +777,6 @@ fn main() {
     println!("============================================================");
 
     let event_loop = EventLoop::new().expect("EventLoop olusturulamadi");
-    let mut app = App::new(auto_exit);
+    let mut app = App::new(auto_exit, scene_path);
     let _ = event_loop.run_app(&mut app);
 }
