@@ -63,6 +63,7 @@ pub(crate) struct EditorState {
     pub(crate) selected_file: String,
     pub(crate) scene_snapshot: Vec<(Entity, Transform2D)>,
     pub(crate) scene_snapshot_3d: Vec<(Entity, Transform3D)>,
+    pub(crate) scene_snapshot_anim_3d: Vec<(Entity, rugeng_core::Animation3DComponent)>,
     pub(crate) current_scene_path: String,
     pub(crate) is_scene_dirty: bool,
     pub(crate) scene_counter: u32,
@@ -222,6 +223,7 @@ impl App {
         registry.register_component::<Animation2DComponent>();
         registry.register_component::<Transform3D>();
         registry.register_component::<Mesh3DComponent>();
+        registry.register_component::<rugeng_core::Animation3DComponent>();
         registry.register_component::<ZIndex2D>();
 
         let mut editor = EditorState {
@@ -244,6 +246,7 @@ impl App {
             selected_file: "fish_eye.gdshader".to_string(),
             scene_snapshot: Vec::new(),
             scene_snapshot_3d: Vec::new(),
+            scene_snapshot_anim_3d: Vec::new(),
             current_scene_path: "scenes/main.scene".to_string(),
             is_scene_dirty: false,
             scene_counter: 1,
@@ -1519,6 +1522,10 @@ impl ApplicationHandler for App {
                             self.load_scene_from_file(&path);
                             return;
                         }
+                        KeyCode::KeyQ => {
+                            event_loop.exit();
+                            return;
+                        }
                         _ => {}
                     }
                 }
@@ -1614,7 +1621,20 @@ impl ApplicationHandler for App {
                         }
                     }
                     KeyCode::Delete | KeyCode::Backspace => self.delete_selected_entity(),
-                    KeyCode::Escape => event_loop.exit(),
+                    KeyCode::Escape => {
+                        if self.editor.show_node_library_dialog {
+                            self.editor.show_node_library_dialog = false;
+                        } else if self.editor.show_new_scene_dialog {
+                            self.editor.show_new_scene_dialog = false;
+                        } else if self.editor.context_menu.is_some() {
+                            self.editor.context_menu = None;
+                        } else if self.editor.renaming.is_some() {
+                            self.cancel_rename();
+                        } else {
+                            self.editor.selected_entity = None;
+                            self.editor.selected_entities.clear();
+                        }
+                    }
                     _ => {}
                 }
             }

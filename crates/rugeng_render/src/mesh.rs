@@ -4,14 +4,16 @@ use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use rugeng_core::{BoundingSphere, AABB3D};
 
-/// 3D Köşe Verisi (Vertex3D: 48 bayt)
+/// 3D Köşe Verisi (Vertex3D: 72 bayt)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct Vertex3D {
-    pub position: [f32; 3], // 12 bayt
-    pub normal: [f32; 3],   // 12 bayt
-    pub uv: [f32; 2],       // 8 bayt
-    pub color: [f32; 4],    // 16 bayt (RGBA f32)
+    pub position: [f32; 3],      // 12 bayt
+    pub normal: [f32; 3],        // 12 bayt
+    pub uv: [f32; 2],            // 8 bayt
+    pub color: [f32; 4],         // 16 bayt (RGBA f32)
+    pub joint_indices: [u16; 4], // 8 bayt
+    pub joint_weights: [f32; 4], // 16 bayt
 }
 
 impl Vertex3D {
@@ -21,6 +23,26 @@ impl Vertex3D {
             normal,
             uv,
             color,
+            joint_indices: [0; 4],
+            joint_weights: [1.0, 0.0, 0.0, 0.0],
+        }
+    }
+
+    pub const fn with_skinning(
+        position: [f32; 3],
+        normal: [f32; 3],
+        uv: [f32; 2],
+        color: [f32; 4],
+        joint_indices: [u16; 4],
+        joint_weights: [f32; 4],
+    ) -> Self {
+        Self {
+            position,
+            normal,
+            uv,
+            color,
+            joint_indices,
+            joint_weights,
         }
     }
 }

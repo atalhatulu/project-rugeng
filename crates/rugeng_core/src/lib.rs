@@ -141,6 +141,7 @@ mod tests {
                 emitter.emission_timer = 0.0;
                 emitter
             }),
+            animation_3d: None,
         });
 
         let json = scene.to_json().expect("JSON serilestirme basarisiz");
@@ -176,6 +177,7 @@ mod tests {
             mesh_3d: None,
             z_index: 0,
             particle: Some(emitter),
+            animation_3d: None,
         });
 
         let json = scene.to_json().expect("JSON serilestirme basarisiz");
@@ -281,6 +283,7 @@ mod node_name_tests {
             transform_3d: None,
             mesh_3d: None,
             particle: None,
+            animation_3d: None,
         });
         let json = serde_json::to_string(&scene).unwrap();
         let back: SceneData = serde_json::from_str(&json).unwrap();

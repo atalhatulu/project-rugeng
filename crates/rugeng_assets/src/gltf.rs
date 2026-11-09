@@ -63,6 +63,16 @@ pub struct GltfSubmesh {
     pub material_index: Option<usize>,
 }
 
+impl GltfSubmesh {
+    pub fn joint_indices(&self) -> Vec<[u16; 4]> {
+        self.vertices.iter().map(|v| v.joints).collect()
+    }
+
+    pub fn joint_weights(&self) -> Vec<[f32; 4]> {
+        self.vertices.iter().map(|v| v.weights).collect()
+    }
+}
+
 /// Çözümlenmiş Doku Verisi (Gömülü veya ayrık)
 #[derive(Clone, Debug)]
 pub struct GltfTexture {
@@ -70,6 +80,18 @@ pub struct GltfTexture {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>, // RGBA8
+}
+
+/// glTF Düğüm Hiyerarşisi (Node Graph)
+#[derive(Clone, Debug)]
+pub struct GltfNode {
+    pub name: String,
+    pub translation: [f32; 3],
+    pub rotation: [f32; 4], // xyzw
+    pub scale: [f32; 3],
+    pub mesh_index: Option<usize>,
+    pub skin_index: Option<usize>,
+    pub children: Vec<GltfNode>,
 }
 
 /// Tam glTF Modeli
@@ -81,6 +103,7 @@ pub struct GltfModel {
     pub textures: Vec<GltfTexture>,
     pub skeleton: Option<rugeng_core::animation_3d::Skeleton>,
     pub animations: Vec<rugeng_core::animation_3d::AnimationClip3D>,
+    pub root_nodes: Vec<GltfNode>,
 }
 
 impl GltfModel {
@@ -116,6 +139,7 @@ impl GltfModel {
             textures: Vec::new(),
             skeleton: None,
             animations: Vec::new(),
+            root_nodes: Vec::new(),
         };
 
         // 1. Dokuları çıkar
@@ -378,6 +402,41 @@ impl GltfModel {
                     channels,
                 ));
         }
+
+        // 6. Düğüm Hiyerarşisi (Node Graph) Ayrıştırma
+        fn build_gltf_node(node: &gltf::Node) -> GltfNode {
+            let (trans, rot, scale) = node.transform().decomposed();
+            let children = node.children().map(|c| build_gltf_node(&c)).collect();
+            GltfNode {
+                name: node.name().unwrap_or("Node").to_string(),
+                translation: trans,
+                rotation: rot,
+                scale,
+                mesh_index: node.mesh().map(|m| m.index()),
+                skin_index: node.skin().map(|s| s.index()),
+                children,
+            }
+        }
+
+        let scenes_roots: Vec<GltfNode> = if let Some(scene) = document.default_scene() {
+            scene.nodes().map(|n| build_gltf_node(&n)).collect()
+        } else if let Some(scene) = document.scenes().next() {
+            scene.nodes().map(|n| build_gltf_node(&n)).collect()
+        } else {
+            // Hiç sahne yoksa kök düğümleri (ebeveyni olmayanları) bul
+            let all_nodes: Vec<gltf::Node> = document.nodes().collect();
+            let child_indices: std::collections::HashSet<usize> = all_nodes
+                .iter()
+                .flat_map(|n| n.children().map(|c| c.index()))
+                .collect();
+            all_nodes
+                .iter()
+                .filter(|n| !child_indices.contains(&n.index()))
+                .map(|n| build_gltf_node(n))
+                .collect()
+        };
+
+        model.root_nodes = scenes_roots;
 
         Ok(model)
     }

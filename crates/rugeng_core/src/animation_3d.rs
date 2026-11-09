@@ -4,11 +4,12 @@
 //! animasyon kanalları (`AnimationChannel3D`, `AnimationClip3D`) ve ciltleme (skinning) matris paletini yönetir.
 
 use glam::{Mat4, Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 pub const MAX_JOINTS: usize = 32;
 
 /// Animasyon hedef parametresi
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AnimationProperty {
     Translation,
     Rotation,
@@ -16,7 +17,7 @@ pub enum AnimationProperty {
 }
 
 /// Enterpolasyon türü
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Interpolation {
     #[default]
     Linear,
@@ -24,7 +25,7 @@ pub enum Interpolation {
 }
 
 /// Tek bir eklem/kemik (Joint)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Joint {
     pub name: String,
     pub parent_index: Option<usize>,
@@ -78,7 +79,7 @@ impl Joint {
 }
 
 /// İskelet yapısı
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Skeleton {
     pub joints: Vec<Joint>,
 }
@@ -113,7 +114,7 @@ impl Skeleton {
 }
 
 /// Animasyon Anahtar Kareleri (Keyframe verisi)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnimationChannel3D {
     pub joint_index: usize,
     pub property: AnimationProperty,
@@ -197,7 +198,7 @@ impl AnimationChannel3D {
 }
 
 /// 3D Animasyon Klibi
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AnimationClip3D {
     pub name: String,
     pub duration: f32,
@@ -284,7 +285,7 @@ impl AnimationClip3D {
 }
 
 /// ECS İskelet Animasyon Bileşeni
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Animation3DComponent {
     pub skeleton: Skeleton,
     pub clips: Vec<AnimationClip3D>,
@@ -292,7 +293,12 @@ pub struct Animation3DComponent {
     pub current_time: f32,
     pub playback_speed: f32,
     pub is_playing: bool,
+    #[serde(skip, default = "default_palette")]
     pub current_palette: [Mat4; MAX_JOINTS],
+}
+
+fn default_palette() -> [Mat4; MAX_JOINTS] {
+    [Mat4::IDENTITY; MAX_JOINTS]
 }
 
 impl Animation3DComponent {
@@ -322,7 +328,7 @@ impl Animation3DComponent {
 }
 
 /// 3D Standart Karakter Animasyon Durumları
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum AnimationState3D {
     #[default]
     Idle,
@@ -332,7 +338,7 @@ pub enum AnimationState3D {
 }
 
 /// 3D Animasyon Durum Makinesi ve Harmanlama (Cross-fade Lerp Blending)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnimationStateMachine3D {
     pub current_state: AnimationState3D,
     pub previous_state: Option<AnimationState3D>,
@@ -629,5 +635,69 @@ mod tests {
         // 4. Karakter düşüşe geçti (havada ve dikey hız negatif veya küçük) -> Fall olmalı
         sm.update_from_velocity(Vec3::new(1.0, -3.0, 0.0), false);
         assert_eq!(sm.current_state, AnimationState3D::Fall);
+    }
+
+    #[test]
+    fn test_animation_3d_component_serde_roundtrip() {
+        let root = Joint::new("Root", None, Mat4::IDENTITY);
+        let hand = Joint::new("Hand", Some(0), Mat4::IDENTITY);
+        let skel = Skeleton::new(vec![root, hand]);
+
+        let channel = AnimationChannel3D {
+            joint_index: 1,
+            property: AnimationProperty::Translation,
+            timestamps: vec![0.0, 1.0],
+            vec3_values: vec![Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0)],
+            quat_values: vec![],
+            interpolation: Interpolation::Linear,
+        };
+        let clip = AnimationClip3D::new("Walk", 1.0, vec![channel]);
+        let comp = Animation3DComponent::new(skel, vec![clip]);
+
+        let json = serde_json::to_string(&comp).expect("serialize failed");
+        let deserialized: Animation3DComponent =
+            serde_json::from_str(&json).expect("deserialize failed");
+
+        assert_eq!(deserialized.skeleton.joints.len(), 2);
+        assert_eq!(deserialized.skeleton.joints[0].name, "Root");
+        assert_eq!(deserialized.skeleton.joints[1].name, "Hand");
+        assert_eq!(deserialized.clips.len(), 1);
+        assert_eq!(deserialized.clips[0].name, "Walk");
+        assert_eq!(deserialized.current_palette[0], Mat4::IDENTITY);
+    }
+
+    #[test]
+    fn test_skinning_matrix_palette_computation() {
+        // Joint 0: Root at origin
+        // Joint 1: Child of Root, translated by (0, 2, 0)
+        let root = Joint::new("Root", None, Mat4::IDENTITY);
+        let child_inverse_bind = Mat4::from_translation(Vec3::new(0.0, -2.0, 0.0));
+        let child = Joint::new("Child", Some(0), child_inverse_bind);
+        let skel = Skeleton::new(vec![root, child]);
+
+        // Channel animating Child translation to (0, 5, 0)
+        let channel = AnimationChannel3D {
+            joint_index: 1,
+            property: AnimationProperty::Translation,
+            timestamps: vec![0.0, 1.0],
+            vec3_values: vec![Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 5.0, 0.0)],
+            quat_values: vec![],
+            interpolation: Interpolation::Linear,
+        };
+        let clip = AnimationClip3D::new("Lift", 2.0, vec![channel]);
+        let mut comp = Animation3DComponent::new(skel, vec![clip]);
+
+        // At t = 0, child pose translation is (0, 2, 0).
+        // Palette = GlobalPose * InverseBind = Translate(0, 2, 0) * Translate(0, -2, 0) = Identity
+        comp.update(0.0);
+        let diff0 = comp.current_palette[1] - Mat4::IDENTITY;
+        assert!(diff0.to_cols_array().iter().all(|&v| v.abs() < 1e-4));
+
+        // Advance by 1.0 sec: Child translation is now (0, 5, 0) at timestamp 1.0.
+        // Palette = Translate(0, 5, 0) * Translate(0, -2, 0) = Translate(0, 3, 0)
+        comp.update(1.0);
+        let expected = Mat4::from_translation(Vec3::new(0.0, 3.0, 0.0));
+        let diff1 = comp.current_palette[1] - expected;
+        assert!(diff1.to_cols_array().iter().all(|&v| v.abs() < 1e-4));
     }
 }

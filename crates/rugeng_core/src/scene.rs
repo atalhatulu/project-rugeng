@@ -48,6 +48,8 @@ pub struct SceneEntity {
     /// emission sayacı) serileştirilmez; yalnızca konfigürasyon saklanır.
     #[serde(default)]
     pub particle: Option<crate::particle::ParticleEmitterComponent>,
+    #[serde(default)]
+    pub animation_3d: Option<crate::animation_3d::Animation3DComponent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

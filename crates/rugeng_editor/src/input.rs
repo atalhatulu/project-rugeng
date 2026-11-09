@@ -538,7 +538,9 @@ impl App {
             }
             // Step (Adım İlerlet - ⏭)
             if mouse.x >= play_x + 84.0 && mouse.x <= play_x + 110.0 {
-                if self.editor.scene_snapshot.is_empty() && self.editor.scene_snapshot_3d.is_empty()
+                if self.editor.scene_snapshot.is_empty()
+                    && self.editor.scene_snapshot_3d.is_empty()
+                    && self.editor.scene_snapshot_anim_3d.is_empty()
                 {
                     self.registry.view1_ref::<Transform2D, _>(|e, t| {
                         self.editor.scene_snapshot.push((e, *t));
@@ -546,6 +548,10 @@ impl App {
                     self.registry.view1_ref::<Transform3D, _>(|e, t| {
                         self.editor.scene_snapshot_3d.push((e, *t));
                     });
+                    self.registry
+                        .view1_ref::<rugeng_core::Animation3DComponent, _>(|e, a| {
+                            self.editor.scene_snapshot_anim_3d.push((e, a.clone()));
+                        });
                 }
                 self.step_simulation_single_frame(1.0 / 60.0);
                 self.editor.logs.push(LogMessage {

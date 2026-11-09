@@ -8,7 +8,7 @@ pub mod server;
 pub mod texture;
 pub mod vfs;
 
-pub use gltf::{GltfMaterial, GltfModel, GltfSubmesh, GltfTexture, GltfVertex};
+pub use gltf::{GltfMaterial, GltfModel, GltfNode, GltfSubmesh, GltfTexture, GltfVertex};
 pub use handle::{Handle, LoadingState};
 pub use pak::{PakEntry, PakReader, PakWriter};
 pub use scene::{SceneEnvironment, VersionedScene};

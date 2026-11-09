@@ -169,8 +169,9 @@ impl App {
         // Sağ: Hızlı Aksiyon Butonları ([KAYDET], [SARSINTI]) ve Oynatma Butonları ([▶], [❚❚], [■], [⏭])
         let play_x = screen_w - 140.0;
         let is_playing = self.editor.is_playing;
-        let has_snapshot =
-            !self.editor.scene_snapshot.is_empty() || !self.editor.scene_snapshot_3d.is_empty();
+        let has_snapshot = !self.editor.scene_snapshot.is_empty()
+            || !self.editor.scene_snapshot_3d.is_empty()
+            || !self.editor.scene_snapshot_anim_3d.is_empty();
 
         // Hızlı Butonlar: [PAK], [DIŞA AKTAR], [KAYDET], [SARSINTI]
         let pak_btn_x = play_x - 310.0;

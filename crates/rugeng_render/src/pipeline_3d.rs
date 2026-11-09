@@ -11,7 +11,7 @@ use crate::mesh::Vertex3D;
 pub const VERT_3D_SPV: &[u8] = include_bytes!("../shaders/mesh_3d.vert.spv");
 pub const FRAG_3D_SPV: &[u8] = include_bytes!("../shaders/mesh_3d.frag.spv");
 
-/// Push Constants (256 bayt: mat4 vp, mat4 model, mat4 light_space, vec4 light_dir_amb, vec4 light_col, vec4 cam_pos, vec4 pbr_params)
+/// Push Constants (256 bayt: mat4 vp, mat4 model, mat4 light_space, vec4 light_dir_amb, vec4 light_col, vec4 cam_pos, vec4 pbr_params, u32 bone_count + 3x u32 pad)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct PushConstants3D {
@@ -21,7 +21,8 @@ pub struct PushConstants3D {
     pub light_dir_ambient: [f32; 4],     // 16 bayt (xyz: dir, w: ambient)
     pub light_color_shininess: [f32; 4], // 16 bayt (xyz: color, w: shininess/pbr)
     pub camera_pos_flags: [f32; 4],      // 16 bayt (xyz: pos, w: has_texture)
-    pub pbr_params: [f32; 4], // 16 bayt (x: roughness, y: metallic, z: has_mr_texture, w: shadow_bias)
+    pub pbr_params: [f32; 3],            // 12 bayt (x: roughness, y: metallic, z: has_mr_texture)
+    pub bone_count: u32,                 // 4 bayt (ciltleme kemik sayısı: 0 ise statik meş)
 }
 
 pub struct Pipeline3D {
@@ -30,6 +31,8 @@ pub struct Pipeline3D {
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_pool: vk::DescriptorPool,
     pub dummy_descriptor_set: vk::DescriptorSet,
+    pub dummy_buffer: vk::Buffer,
+    pub dummy_memory: vk::DeviceMemory,
 }
 
 impl Pipeline3D {
@@ -40,7 +43,11 @@ impl Pipeline3D {
         default_image_view: vk::ImageView,
         default_sampler: vk::Sampler,
     ) -> Result<Self, String> {
-        // 1. Descriptor Set Layout (Binding 0: albedo texture, Binding 1: metallic-roughness texture, Binding 2: shadow map)
+        // 1. Descriptor Set Layout
+        // Binding 0: albedo texture (FRAGMENT)
+        // Binding 1: metallic-roughness texture (FRAGMENT)
+        // Binding 2: shadow map (FRAGMENT)
+        // Binding 3: joint matrices SSBO (VERTEX)
         let bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(0)
@@ -57,6 +64,11 @@ impl Pipeline3D {
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(3)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::VERTEX),
         ];
 
         let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
@@ -149,6 +161,18 @@ impl Pipeline3D {
                 .location(3)
                 .format(vk::Format::R32G32B32A32_SFLOAT)
                 .offset(32),
+            // joint_indices: location 4, uvec4 (R16G16B16A16_UINT)
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(4)
+                .format(vk::Format::R16G16B16A16_UINT)
+                .offset(48),
+            // joint_weights: location 5, vec4 (R32G32B32A32_SFLOAT)
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(5)
+                .format(vk::Format::R32G32B32A32_SFLOAT)
+                .offset(56),
         ];
 
         let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default()
@@ -233,12 +257,17 @@ impl Pipeline3D {
         }
 
         // 5. Descriptor Pool ve Varsayılan Doku Seti
-        let pool_size = vk::DescriptorPoolSize::default()
-            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(8);
+        let pool_sizes = [
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(24),
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(8),
+        ];
 
         let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .pool_sizes(std::slice::from_ref(&pool_size))
+            .pool_sizes(&pool_sizes)
             .max_sets(8);
 
         let descriptor_pool = unsafe {
@@ -263,6 +292,41 @@ impl Pipeline3D {
             .image_view(default_image_view)
             .sampler(default_sampler);
 
+        // Dummy SSBO oluştur (128 Mat4 = 8192 bayt)
+        let dummy_buffer_info = vk::BufferCreateInfo::default()
+            .size(8192)
+            .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+        let dummy_buffer = unsafe {
+            device
+                .create_buffer(&dummy_buffer_info, None)
+                .map_err(|e| format!("Dummy joint buffer olusturulamadi: {e}"))?
+        };
+
+        let mem_reqs = unsafe { device.get_buffer_memory_requirements(dummy_buffer) };
+        let mem_prop = vk::MemoryAllocateInfo::default()
+            .allocation_size(mem_reqs.size)
+            .memory_type_index(0);
+
+        // SAFETY: Dummy joint buffer belleği (geçici host visible tahsis)
+        let dummy_memory = unsafe {
+            device
+                .allocate_memory(&mem_prop, None)
+                .map_err(|e| format!("Dummy joint memory allocate basarisiz: {e}"))?
+        };
+
+        unsafe {
+            device
+                .bind_buffer_memory(dummy_buffer, dummy_memory, 0)
+                .map_err(|e| format!("Dummy joint memory baglanamadi: {e}"))?;
+        }
+
+        let buffer_info = vk::DescriptorBufferInfo::default()
+            .buffer(dummy_buffer)
+            .offset(0)
+            .range(8192);
+
         let writes = [
             vk::WriteDescriptorSet::default()
                 .dst_set(dummy_descriptor_set)
@@ -279,6 +343,11 @@ impl Pipeline3D {
                 .dst_binding(2)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(std::slice::from_ref(&image_info)),
+            vk::WriteDescriptorSet::default()
+                .dst_set(dummy_descriptor_set)
+                .dst_binding(3)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(std::slice::from_ref(&buffer_info)),
         ];
 
         unsafe {
@@ -291,6 +360,8 @@ impl Pipeline3D {
             descriptor_set_layout,
             descriptor_pool,
             dummy_descriptor_set,
+            dummy_buffer,
+            dummy_memory,
         })
     }
 
@@ -347,7 +418,8 @@ impl Pipeline3D {
                     camera.eye.z,
                     if has_texture { 1.0 } else { 0.0 },
                 ],
-                pbr_params: [0.5, 0.0, 0.0, 0.0025],
+                pbr_params: [0.5, 0.0, 0.0],
+                bone_count: 0,
             };
 
             let push_bytes = bytemuck::bytes_of(&push_data);
@@ -510,12 +582,8 @@ impl Pipeline3D {
                     camera.eye.z,
                     if has_texture { 1.0 } else { 0.0 },
                 ],
-                pbr_params: [
-                    roughness,
-                    metallic,
-                    if has_mr_texture { 1.0 } else { 0.0 },
-                    0.0025,
-                ],
+                pbr_params: [roughness, metallic, if has_mr_texture { 1.0 } else { 0.0 }],
+                bone_count: 0,
             };
 
             let push_bytes = bytemuck::bytes_of(&push_data);
@@ -547,6 +615,8 @@ impl Pipeline3D {
             device.destroy_pipeline_layout(self.layout, None);
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             device.destroy_descriptor_pool(self.descriptor_pool, None);
+            device.destroy_buffer(self.dummy_buffer, None);
+            device.free_memory(self.dummy_memory, None);
         }
     }
 }

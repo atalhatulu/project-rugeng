@@ -3,10 +3,10 @@ use crate::App;
 use glam::Vec2;
 use rugeng_assets::VersionedScene;
 use rugeng_core::{
-    Animation2DComponent, AnimationClip, Children, Collider2D, Entity, Mesh3DComponent, NodeName,
-    Parent, ParticleEmitterComponent, Prefab, SceneData, SceneEntity, ScriptComponent, SpriteColor,
-    SpriteTexture, Text2DComponent, TileData, TileType, Tilemap2DComponent, Transform2D,
-    Transform3D, Velocity2D, ZIndex2D,
+    Animation2DComponent, Animation3DComponent, AnimationClip, Children, Collider2D, Entity,
+    Mesh3DComponent, NodeName, Parent, ParticleEmitterComponent, Prefab, SceneData, SceneEntity,
+    ScriptComponent, SpriteColor, SpriteTexture, Text2DComponent, TileData, TileType,
+    Tilemap2DComponent, Transform2D, Transform3D, Velocity2D, ZIndex2D,
 };
 
 impl App {
@@ -54,6 +54,7 @@ impl App {
                 cfg.emission_timer = 0.0;
                 cfg
             });
+            let animation_3d = self.registry.get::<Animation3DComponent>(e).cloned();
 
             scene.entities.push(SceneEntity {
                 id: e.index(),
@@ -76,6 +77,7 @@ impl App {
                 mesh_3d,
                 z_index,
                 particle,
+                animation_3d,
             });
         }
 
@@ -91,6 +93,7 @@ impl App {
                 .registry
                 .get::<ScriptComponent>(e)
                 .map(|s| s.name.clone());
+            let animation_3d = self.registry.get::<Animation3DComponent>(e).cloned();
 
             scene.entities.push(SceneEntity {
                 id: e.index(),
@@ -113,6 +116,7 @@ impl App {
                 mesh_3d: m3,
                 z_index: 0,
                 particle: None,
+                animation_3d,
             });
         }
 
@@ -190,6 +194,7 @@ impl App {
                 cfg.emission_timer = 0.0;
                 cfg
             });
+            let animation_3d = self.registry.get::<Animation3DComponent>(e).cloned();
 
             scene.entities.push(SceneEntity {
                 id: e.index(),
@@ -212,6 +217,7 @@ impl App {
                 mesh_3d,
                 z_index,
                 particle,
+                animation_3d,
             });
         }
 
@@ -227,6 +233,7 @@ impl App {
                 .registry
                 .get::<ScriptComponent>(e)
                 .map(|s| s.name.clone());
+            let animation_3d = self.registry.get::<Animation3DComponent>(e).cloned();
 
             scene.entities.push(SceneEntity {
                 id: e.index(),
@@ -249,6 +256,7 @@ impl App {
                 mesh_3d: m3,
                 z_index: 0,
                 particle: None,
+                animation_3d,
             });
         }
 
@@ -376,6 +384,9 @@ impl App {
                     }
                     if let Some(p) = &item.particle {
                         self.registry.emplace(e, p.clone());
+                    }
+                    if let Some(anim3d) = &item.animation_3d {
+                        self.registry.emplace(e, anim3d.clone());
                     }
                 }
 
@@ -1952,48 +1963,176 @@ impl App {
         let cam_fwd = self.editor.camera_3d.forward();
         let base_spawn = cam_eye + cam_fwd * 5.0;
 
-        for (idx, submesh) in model.submeshes.iter().enumerate() {
-            let e = self.registry.create();
-            let mut roughness = 0.5f32;
-            let mut metallic = 0.0f32;
-            let mut color = [0.8, 0.8, 0.8, 1.0];
+        if !model.root_nodes.is_empty() {
+            fn spawn_node(
+                app: &mut App,
+                model: &rugeng_assets::GltfModel,
+                node: &rugeng_assets::GltfNode,
+                parent_e: Option<Entity>,
+                base_spawn: glam::Vec3,
+                created: &mut Vec<Entity>,
+                skeleton_attached: &mut bool,
+            ) -> Entity {
+                let e = app.registry.create();
+                created.push(e);
 
-            if let Some(mat_idx) = submesh.material_index {
-                if let Some(mat) = model.materials.get(mat_idx) {
-                    roughness = mat.roughness_factor;
-                    metallic = mat.metallic_factor;
-                    color = mat.base_color_factor;
+                let trans = if parent_e.is_none() {
+                    base_spawn + glam::Vec3::from(node.translation)
+                } else {
+                    glam::Vec3::from(node.translation)
+                };
+                let rot = glam::Quat::from_xyzw(
+                    node.rotation[0],
+                    node.rotation[1],
+                    node.rotation[2],
+                    node.rotation[3],
+                );
+                let scale = glam::Vec3::from(node.scale);
+
+                app.registry.emplace(
+                    e,
+                    Transform3D {
+                        translation: trans,
+                        rotation: rot,
+                        scale,
+                    },
+                );
+
+                let node_name = if node.name.is_empty() {
+                    format!("{}_Node_{}", model.name, e.index())
+                } else {
+                    node.name.clone()
+                };
+                app.registry.emplace(e, NodeName::new(node_name));
+
+                // Mesh bağlıysa Mesh3DComponent ekle
+                if let Some(mesh_idx) = node.mesh_index {
+                    if let Some(submesh) = model.submeshes.get(mesh_idx) {
+                        let mut roughness = 0.5f32;
+                        let mut metallic = 0.0f32;
+                        let mut color = [0.8, 0.8, 0.8, 1.0];
+
+                        if let Some(mat_idx) = submesh.material_index {
+                            if let Some(mat) = model.materials.get(mat_idx) {
+                                roughness = mat.roughness_factor;
+                                metallic = mat.metallic_factor;
+                                color = mat.base_color_factor;
+                            }
+                        }
+
+                        let mesh_comp_name = if submesh.name.is_empty() {
+                            format!("{}_mesh_{}", model.name, mesh_idx)
+                        } else {
+                            submesh.name.clone()
+                        };
+
+                        app.registry.emplace(
+                            e,
+                            Mesh3DComponent::with_pbr(mesh_comp_name, color, roughness, metallic),
+                        );
+                    }
                 }
+
+                // Ebeveyn / Çocuk ilişkisini kur
+                if let Some(p) = parent_e {
+                    app.registry.emplace(e, Parent { entity: p });
+                    if let Some(children) = app.registry.get_mut::<Children>(p) {
+                        children.add(e);
+                    } else {
+                        let mut ch = Children::new();
+                        ch.add(e);
+                        app.registry.emplace(p, ch);
+                    }
+                }
+
+                // İskelet kökü tespiti: İskelet varsa ve henüz eklenmediyse ilk düğüme veya skin_index içeren düğüme ekle
+                if !*skeleton_attached && (node.skin_index.is_some() || parent_e.is_none()) {
+                    if let Some(skel) = model.skeleton.as_ref() {
+                        let anim_comp = rugeng_core::Animation3DComponent::new(
+                            skel.clone(),
+                            model.animations.clone(),
+                        );
+                        app.registry.emplace(e, anim_comp);
+                        *skeleton_attached = true;
+                    }
+                }
+
+                for child in &node.children {
+                    spawn_node(
+                        app,
+                        model,
+                        child,
+                        Some(e),
+                        base_spawn,
+                        created,
+                        skeleton_attached,
+                    );
+                }
+
+                e
             }
 
-            self.registry.emplace(
-                e,
-                Transform3D {
-                    translation: base_spawn,
-                    rotation: glam::Quat::IDENTITY,
-                    scale: glam::Vec3::ONE,
-                },
-            );
-
-            let mesh_name = if submesh.name.is_empty() {
-                format!("{}_submesh_{idx}", model.name)
-            } else {
-                submesh.name.clone()
-            };
-
-            self.registry.emplace(
-                e,
-                Mesh3DComponent::with_pbr(mesh_name.clone(), color, roughness, metallic),
-            );
-            self.registry.emplace(e, NodeName::new(mesh_name));
-
-            if let Some(ref skel) = model.skeleton {
-                let anim_comp =
-                    rugeng_core::Animation3DComponent::new(skel.clone(), model.animations.clone());
-                self.registry.emplace(e, anim_comp);
+            let mut skeleton_attached = false;
+            for root in &model.root_nodes {
+                spawn_node(
+                    self,
+                    &model,
+                    root,
+                    None,
+                    base_spawn,
+                    &mut created_entities,
+                    &mut skeleton_attached,
+                );
             }
+        } else {
+            // Fallback: Doğrudan submesh listesinden oluştur
+            for (idx, submesh) in model.submeshes.iter().enumerate() {
+                let e = self.registry.create();
+                let mut roughness = 0.5f32;
+                let mut metallic = 0.0f32;
+                let mut color = [0.8, 0.8, 0.8, 1.0];
 
-            created_entities.push(e);
+                if let Some(mat_idx) = submesh.material_index {
+                    if let Some(mat) = model.materials.get(mat_idx) {
+                        roughness = mat.roughness_factor;
+                        metallic = mat.metallic_factor;
+                        color = mat.base_color_factor;
+                    }
+                }
+
+                self.registry.emplace(
+                    e,
+                    Transform3D {
+                        translation: base_spawn,
+                        rotation: glam::Quat::IDENTITY,
+                        scale: glam::Vec3::ONE,
+                    },
+                );
+
+                let mesh_name = if submesh.name.is_empty() {
+                    format!("{}_submesh_{idx}", model.name)
+                } else {
+                    submesh.name.clone()
+                };
+
+                self.registry.emplace(
+                    e,
+                    Mesh3DComponent::with_pbr(mesh_name.clone(), color, roughness, metallic),
+                );
+                self.registry.emplace(e, NodeName::new(mesh_name));
+
+                if idx == 0 {
+                    if let Some(ref skel) = model.skeleton {
+                        let anim_comp = rugeng_core::Animation3DComponent::new(
+                            skel.clone(),
+                            model.animations.clone(),
+                        );
+                        self.registry.emplace(e, anim_comp);
+                    }
+                }
+
+                created_entities.push(e);
+            }
         }
 
         if let Some(&first) = created_entities.first() {
@@ -2003,7 +2142,7 @@ impl App {
         self.editor.logs.push(LogMessage {
             level: "INFO",
             text: format!(
-                "glTF modeli ice aktarildi: {} ({} submesh)",
+                "glTF modeli ice aktarildi: {} ({} dugum)",
                 model.name,
                 created_entities.len()
             ),

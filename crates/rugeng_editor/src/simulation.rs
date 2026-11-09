@@ -2,9 +2,9 @@ use crate::types::*;
 use crate::App;
 use glam::Vec2;
 use rugeng_core::{
-    compute_world_transform, Animation2DComponent, Collider2D, Entity, Parent,
-    ParticleEmitterComponent, ScriptComponent, SpriteTexture, Tilemap2DComponent, Transform2D,
-    Transform3D, Velocity2D,
+    compute_world_transform, Animation2DComponent, Animation3DComponent, Collider2D, Entity,
+    Parent, ParticleEmitterComponent, ScriptComponent, SpriteTexture, Tilemap2DComponent,
+    Transform2D, Transform3D, Velocity2D,
 };
 use rugeng_physics::resolve_aabb_collision;
 impl App {
@@ -83,80 +83,99 @@ impl App {
     }
 
     pub(crate) fn step_simulation_single_frame(&mut self, dt: f32) {
-        let pool_tr = unsafe { self.registry.storage_mut::<Transform2D>() };
-
-        // 3. Fizik ve Hız Çarpma Mantığı
-        let pool_vel = unsafe { self.registry.storage_mut::<Velocity2D>() };
-        let (entities, vels) = pool_vel.split_entities_and_components_mut();
-        for (idx, &e) in entities.iter().enumerate() {
-            let vel = &mut vels[idx];
-            if let Some(tr) = pool_tr.get_mut(e) {
+        // 3. Fizik ve Hız Çarpma Mantığı (safe view2_mut_ref: Transform2D mut, Velocity2D ref)
+        // We iterate and update Transform2D based on Velocity2D. For bouncing, we collect bounces or mutate via get_mut.
+        let mut bounce_vels = Vec::new();
+        self.registry
+            .view2_mut_ref::<Transform2D, Velocity2D, _>(|e, tr, vel| {
                 tr.pos += vel.vel * dt;
+                let mut new_vel = vel.vel;
+                let mut bounced = false;
                 if tr.pos.x > 320.0 || tr.pos.x < -320.0 {
-                    vel.vel.x = -vel.vel.x;
+                    new_vel.x = -new_vel.x;
+                    bounced = true;
                 }
                 if tr.pos.y > 220.0 || tr.pos.y < -220.0 {
-                    vel.vel.y = -vel.vel.y;
+                    new_vel.y = -new_vel.y;
+                    bounced = true;
                 }
+                if bounced {
+                    bounce_vels.push((e, new_vel));
+                }
+            });
+        for (e, new_v) in bounce_vels {
+            if let Some(vel) = self.registry.get_mut::<Velocity2D>(e) {
+                vel.vel = new_v;
             }
         }
 
         // 4. Betik Yaşam Döngüsü Güncellemesi
-        let pool_scripts = unsafe { self.registry.storage_mut::<ScriptComponent>() };
-        let (script_entities, scripts) = pool_scripts.split_entities_and_components_mut();
-        for (idx, &e) in script_entities.iter().enumerate() {
-            let script = &mut scripts[idx];
-            if let Some(tr) = pool_tr.get_mut(e) {
+        let mut script_data: Vec<(Entity, ScriptComponent)> = Vec::new();
+        self.registry.view1_ref::<ScriptComponent, _>(|e, s| {
+            script_data.push((e, s.clone()));
+        });
+        for (e, mut script) in script_data {
+            if let Some(tr) = self.registry.get_mut::<Transform2D>(e) {
                 script.update(dt, &mut tr.pos, &mut tr.size, &mut tr.rotation);
+            }
+            if let Some(s) = self.registry.get_mut::<ScriptComponent>(e) {
+                *s = script;
             }
         }
 
         // 5. Hiyerarşi (Parent - Child Transform Senkronizasyonu)
-        let pool_parent = unsafe { self.registry.storage::<Parent>() };
-        for &e in pool_parent.entities() {
-            if let Some(parent) = pool_parent.get(e) {
-                if let Some(parent_tr) = pool_tr.get(parent.entity).copied() {
-                    if let Some(child_tr) = pool_tr.get_mut(e) {
-                        let (w_pos, w_rot) = compute_world_transform(
-                            Vec2::new(24.0, 0.0),
-                            0.0,
-                            parent_tr.pos,
-                            parent_tr.rotation,
-                        );
-                        child_tr.pos = w_pos;
-                        child_tr.rotation = w_rot;
-                    }
+        // We read Parent components and update child Transform2D based on parent's Transform2D
+        let parent_links: Vec<(Entity, Entity)> = {
+            let mut links = Vec::new();
+            self.registry.view1_ref::<Parent, _>(|child, p| {
+                links.push((child, p.entity));
+            });
+            links
+        };
+        for (child, parent) in parent_links {
+            if let Some(parent_tr) = self.registry.get::<Transform2D>(parent).copied() {
+                if let Some(child_tr) = self.registry.get_mut::<Transform2D>(child) {
+                    let (w_pos, w_rot) = compute_world_transform(
+                        Vec2::new(24.0, 0.0),
+                        0.0,
+                        parent_tr.pos,
+                        parent_tr.rotation,
+                    );
+                    child_tr.pos = w_pos;
+                    child_tr.rotation = w_rot;
                 }
             }
         }
 
         // 6. Katı AABB Çarpışma Ayrıştırması (Penetration Resolution)
-        let pool_col = unsafe { self.registry.storage::<Collider2D>() };
-        let col_entities: Vec<Entity> = pool_col.entities().to_vec();
-        for i in 0..col_entities.len() {
-            for j in (i + 1)..col_entities.len() {
-                let e_a = col_entities[i];
-                let e_b = col_entities[j];
-                let col_a = pool_col.get(e_a);
-                let col_b = pool_col.get(e_b);
-
-                let is_sensor_a = col_a.map(|c| c.is_sensor).unwrap_or(false);
-                let is_sensor_b = col_b.map(|c| c.is_sensor).unwrap_or(false);
-                if is_sensor_a || is_sensor_b {
-                    continue;
+        let col_data: Vec<(Entity, bool, bool, Option<Transform2D>)> = {
+            let mut list = Vec::new();
+            self.registry.view1_ref::<Collider2D, _>(|e, col| {
+                if !col.is_sensor {
+                    let tr = self.registry.get::<Transform2D>(e).copied();
+                    list.push((e, col.is_sensor, col.is_dynamic, tr));
                 }
+            });
+            list
+        };
 
-                let is_dyn_a = col_a.map(|c| c.is_dynamic).unwrap_or(false);
-                let is_dyn_b = col_b.map(|c| c.is_dynamic).unwrap_or(false);
+        for i in 0..col_data.len() {
+            for j in (i + 1)..col_data.len() {
+                let (e_a, _, is_dyn_a, tr_a_opt) = col_data[i];
+                let (e_b, _, is_dyn_b, tr_b_opt) = col_data[j];
 
                 if !is_dyn_a && !is_dyn_b {
                     continue;
                 }
 
-                let tr_a_opt = pool_tr.get(e_a).copied();
-                let tr_b_opt = pool_tr.get(e_b).copied();
+                // SAFETY: We verify distinct entities (i != j implies e_a != e_b).
+                // Both entity positions are resolved and written back through safe registry getters.
+                debug_assert_ne!(e_a, e_b, "Colliders in pair resolution must be distinct");
 
-                if let (Some(mut tr_a), Some(mut tr_b)) = (tr_a_opt, tr_b_opt) {
+                let cur_a_opt = self.registry.get::<Transform2D>(e_a).copied().or(tr_a_opt);
+                let cur_b_opt = self.registry.get::<Transform2D>(e_b).copied().or(tr_b_opt);
+
+                if let (Some(mut tr_a), Some(mut tr_b)) = (cur_a_opt, cur_b_opt) {
                     if resolve_aabb_collision(
                         &mut tr_a.pos,
                         tr_a.size,
@@ -165,10 +184,10 @@ impl App {
                         tr_b.size,
                         is_dyn_b,
                     ) {
-                        if let Some(t) = pool_tr.get_mut(e_a) {
+                        if let Some(t) = self.registry.get_mut::<Transform2D>(e_a) {
                             t.pos = tr_a.pos;
                         }
-                        if let Some(t) = pool_tr.get_mut(e_b) {
+                        if let Some(t) = self.registry.get_mut::<Transform2D>(e_b) {
                             t.pos = tr_b.pos;
                         }
                     }
@@ -177,40 +196,54 @@ impl App {
         }
 
         // 7. 2D Sprite Kare Animasyon Güncellemesi
-        let pool_anims = unsafe { self.registry.storage_mut::<Animation2DComponent>() };
-        let pool_tex = unsafe { self.registry.storage_mut::<SpriteTexture>() };
-        let (anim_entities, anims) = pool_anims.split_entities_and_components_mut();
-        for (idx, &e) in anim_entities.iter().enumerate() {
-            let anim = &mut anims[idx];
-            if anim.update(dt) {
-                if let Some(tex_name) = anim.current_texture_name() {
-                    if let Some(tex_comp) = pool_tex.get_mut(e) {
-                        tex_comp.name = tex_name.to_string();
+        let mut anim_updates = Vec::new();
+        self.registry
+            .view1_mut::<Animation2DComponent, _>(|e, anim| {
+                if anim.update(dt) {
+                    if let Some(tex_name) = anim.current_texture_name() {
+                        anim_updates.push((e, tex_name.to_string()));
                     }
                 }
+            });
+        for (e, tex_name) in anim_updates {
+            if let Some(tex_comp) = self.registry.get_mut::<SpriteTexture>(e) {
+                tex_comp.name = tex_name;
             }
         }
 
         // 8. Tilemap Katı Karoları ile Dinamik Nesne Çarpışması
-        let pool_tilemaps = unsafe { self.registry.storage::<Tilemap2DComponent>() };
-        for &tm_e in pool_tilemaps.entities() {
-            if let Some(map) = pool_tilemaps.get(tm_e) {
-                let solid_boxes = map.solid_aabb_boxes();
-                for &e in &col_entities {
-                    let is_dyn = pool_col.get(e).map(|c| c.is_dynamic).unwrap_or(false);
-                    if is_dyn {
-                        if let Some(tr) = pool_tr.get_mut(e) {
-                            for &(tile_center, tile_sz) in &solid_boxes {
-                                let mut dummy_tile_pos = tile_center;
-                                resolve_aabb_collision(
-                                    &mut tr.pos,
-                                    tr.size,
-                                    true,
-                                    &mut dummy_tile_pos,
-                                    tile_sz,
-                                    false,
-                                );
-                            }
+        let solid_boxes_list: Vec<Vec<(Vec2, Vec2)>> = {
+            let mut list = Vec::new();
+            self.registry.view1_ref::<Tilemap2DComponent, _>(|_e, map| {
+                list.push(map.solid_aabb_boxes());
+            });
+            list
+        };
+
+        if !solid_boxes_list.is_empty() {
+            let dynamic_colliders: Vec<Entity> = {
+                let mut list = Vec::new();
+                self.registry.view1_ref::<Collider2D, _>(|e, col| {
+                    if col.is_dynamic && !col.is_sensor {
+                        list.push(e);
+                    }
+                });
+                list
+            };
+
+            for e in dynamic_colliders {
+                if let Some(tr) = self.registry.get_mut::<Transform2D>(e) {
+                    for solid_boxes in &solid_boxes_list {
+                        for &(tile_center, tile_sz) in solid_boxes {
+                            let mut dummy_tile_pos = tile_center;
+                            resolve_aabb_collision(
+                                &mut tr.pos,
+                                tr.size,
+                                true,
+                                &mut dummy_tile_pos,
+                                tile_sz,
+                                false,
+                            );
                         }
                     }
                 }
@@ -218,25 +251,33 @@ impl App {
         }
 
         // 9. 3D Simülasyon Adımı (3D Varlıkların Transform Hareketi)
-        let pool_tr3d = unsafe { self.registry.storage_mut::<Transform3D>() };
-        let (entities_3d, trs_3d) = pool_tr3d.split_entities_and_components_mut();
-        for (idx, _e) in entities_3d.iter().enumerate() {
-            let tr3d = &mut trs_3d[idx];
-            // Simülasyonda 3D varlıkların yerel hareketi / rotasyonu (örnek demo dönüşü)
+        self.registry.view1_mut::<Transform3D, _>(|_e, tr3d| {
             let delta_rot = glam::Quat::from_rotation_y(0.5 * dt);
             tr3d.rotation = (tr3d.rotation * delta_rot).normalize();
             tr3d.translation.y += 0.1 * dt;
-        }
+        });
+
+        // 10. 3D İskelet Animasyonu Güncellemesi
+        self.registry
+            .view1_mut::<Animation3DComponent, _>(|_e, anim3d| {
+                anim3d.update(dt);
+            });
     }
 
     /// Simülasyonu başlatır ve mevcut sahne durumunun (2D ve 3D) snapshot'ını alır
     pub(crate) fn start_simulation(&mut self) {
-        if self.editor.scene_snapshot.is_empty() && self.editor.scene_snapshot_3d.is_empty() {
+        if self.editor.scene_snapshot.is_empty()
+            && self.editor.scene_snapshot_3d.is_empty()
+            && self.editor.scene_snapshot_anim_3d.is_empty()
+        {
             self.registry.view1_ref::<Transform2D, _>(|e, t| {
                 self.editor.scene_snapshot.push((e, *t));
             });
             self.registry.view1_ref::<Transform3D, _>(|e, t| {
                 self.editor.scene_snapshot_3d.push((e, *t));
+            });
+            self.registry.view1_ref::<Animation3DComponent, _>(|e, a| {
+                self.editor.scene_snapshot_anim_3d.push((e, a.clone()));
             });
         }
         self.editor.is_playing = true;
@@ -257,5 +298,10 @@ impl App {
             }
         }
         self.editor.scene_snapshot_3d.clear();
+        for (e, a) in self.editor.scene_snapshot_anim_3d.drain(..) {
+            if let Some(cur_a) = self.registry.get_mut::<Animation3DComponent>(e) {
+                *cur_a = a;
+            }
+        }
     }
 }
