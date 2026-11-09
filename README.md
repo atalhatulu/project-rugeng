@@ -8,7 +8,7 @@
 
 ## 1. Genel Durum ve Kalite Metrikleri
 
-- **Doğrulanmış Test Sayısı:** **183 Test (%100 Yeşil)**
+- **Doğrulanmış Test Sayısı:** **149+ Test (%100 Yeşil)**
 - **Test Baseline Referansı:** [`docs/TEST_BASELINE.md`](docs/TEST_BASELINE.md)
 - **Clippy Denetimi:** **0 Uyarı** (`cargo clippy --workspace --all-targets -- -D warnings`)
 - **Format Uyumu:** Temiz (`cargo fmt --check`)
@@ -36,11 +36,11 @@ Project Rugeng, birbirine gevşek bağlı (loosely coupled), yüksek performansl
 ```
 project-rugeng/
 ├── crates/
-│   ├── rugeng_core/       # Flat Sparse-Set ECS, FrameArena, CommandBuffer, AccessSet, Animasyon Durum Makinesi
-│   ├── rugeng_render/     # Vulkan 1.3/1.4 Dynamic Rendering + Sync2, Instanced 2D, D32 Depth, PBR 3D, Gölge (PCF 3x3), Swash Font
-│   ├── rugeng_editor/     # Godot 4 tarzı modüler dock layout (ui/), 3D flycam, çoklu sahne sekmeleri, gizmolar, dosya sistemi
+│   ├── rugeng_core/       # Flat Sparse-Set ECS, FrameArena, CommandBuffer, AccessSet, Animasyon Durum Makinesi, emplace_checked
+│   ├── rugeng_render/     # Vulkan 1.3/1.4 Dynamic Rendering + Sync2, Instanced 2D, D32 Depth, PBR 3D, Noktasal Işıklar SSBO, 4-Kaskad CSM, HDR Tonemapping, Swash Font
+│   ├── rugeng_editor/     # Godot 4 tarzı modüler dock layout (ui/), Inspector sayısal veri girişi & geri alma, sahne ağacı sürükle-bırak reparenting, 3D flycam, çoklu sahne sekmeleri, gizmolar, dosya sistemi
 │   ├── rugeng_physics/    # 2D Spatial Hash, AABB & Slope çözücü, 3D AABB/Sphere/Capsule, Kinematik Karakter Kontrolcüsü
-│   ├── rugeng_scheduler/  # Panic-safe work-stealing thread pool, DAG zamanlayıcı, Loom onaylı
+│   ├── rugeng_scheduler/  # Panic-safe work-stealing thread pool, DAG zamanlayıcı, SystemAccess çakışma tespiti, Loom onaylı
 │   ├── rugeng_assets/     # Bellek eşlemeli (mmap) VFS, glTF 2.0/GLB yükleyici, İkili/JSON VersionedScene, .pak arşivi
 │   └── rugeng_script/     # Luau sandbox, SoA scratch view, durum korumalı sıcak yeniden yükleme (hot reload)
 ├── games/
@@ -55,19 +55,20 @@ project-rugeng/
 ## 4. Uygulanan Özellikler (Mevcut Durum)
 
 ### A. Çekirdek ve Mantık (`rugeng_core`, `rugeng_scheduler`, `rugeng_script`)
-- **Flat Sparse-Set ECS:** Cache-dostu dizi yerleşimi, minimum bellek ayak izi.
+- **Flat Sparse-Set ECS:** Cache-dostu dizi yerleşimi, minimum bellek ayak izi, `emplace_checked` ile güvenli varlık doğrulama.
 - **Sıfır-Alloc CommandBuffer:** Çerçeve içi yapısal değişikliklerin (spawn/despawn) gecikmeli ve toplu uygulanması.
-- **AccessSet Tabanlı Paralel Scheduler:** Sistemlerin bileşen okuma/yazma çakışmalarını compile/runtime anında DAG'a dizerek güvenli paralel çalıştırma.
-- **Kinematik Animasyon Durum Makinesi (3D):** Durumlar arası doğrusal harmanlama (cross-fade / lerp) ve hız duyarlı geçişler.
+- **AccessSet Tabanlı Paralel Scheduler (SystemDAG):** Sistemlerin bileşen okuma/yazma çakışmalarını analiz ederek çakışmayan sistemleri aynı paralel aşamada (stage) iş parçacığı havuzu üzerinde eşzamanlı çalıştırır.
+- **3D İskelet Ciltleme ve Animasyon:** `Animation3DComponent`, `AnimationClip3D`, `Skeleton`, `Joint` veri yapıları ve doğrusal harmanlama.
 - **Luau Script Sandbox:** SoA scratch bellek alanı üzerinden güvenli bellek ve döngü limitli betik çalıştırma.
 
 ### B. Grafik ve Render Motoru (`rugeng_render`)
 - **Vulkan 1.3/1.4 Dynamic Rendering:** Render pass nesneleri olmadan modern ve hafif render hattı.
 - **Instanced 2D Render:** Tek bir `vkCmdDraw(6, N)` çağrısıyla yüz binlerce sprite çizimi.
-- **Cook-Torrance PBR 3D Render:** GGX/Smith mikro yüzey dağılımı, Fresnel-Schlick yansıması, Reinhard ton haritalama ve gama 2.2 düzeltmesi.
-- **Directional Shadow Mapping:** 2048x2048 D32_SFLOAT derinlik tamponu ve 3x3 PCF (Percentage-Closer Filtering) yumuşak gölgelendirme.
-- **Skeletal Skinning Altyapısı:** Matris paleti ve GPU vertex skinning veri yapıları.
-- **Tipografi ve Font:** `swash` 0.1 motoruyla Türkçe karakter (`ş`, `ç`, `ğ`, `ı`, `ö`, `ü`) ve vektörel UI ikonları.
+- **Cook-Torrance PBR 3D Render:** GGX/Smith mikro yüzey dağılımı, Fresnel-Schlick yansıması, 72 bayt `Vertex3D` (skinning indeksleri ve ağırlıkları dahil).
+- **GpuPointLight Çoklu Noktasal Işık (SSBO Binding 4):** Push constants ve SSBO üzerinden 64 adede kadar dinamik noktasal ışıklandırma.
+- **Kaskadlı Gölge Haritaları (Cascaded Shadow Maps - CSM):** 4 katmanlı 2D Array dokusu (`ImageViewType::TYPE_2D_ARRAY`), SSBO Binding 5 matrisleri ve `sampler2DArrayShadow` PCF yumuşak gölgelendirme.
+- **HDR & Tonemapping Hattı:** 16-bit kayan noktalı (`R16G16B16A16_SFLOAT`) HDR hedef tamponu, Reinhard ton haritalama ve gama 2.2 düzeltmesi.
+- **Tipografi ve Vektörel İkonlar:** `swash` motoruyla UTF-8 Türkçe desteği, tekilleştirilmiş paylaşımlı prosedürel UI ikonları.
 
 ### C. Fizik ve Mekânsal Hızlandırma (`rugeng_physics`)
 - **2D Spatial Hash Grid & Slope Solver:** 45 derece eğim, tek yönlü platformlar ve dinamik AABB çarpışmaları.
@@ -76,39 +77,16 @@ project-rugeng/
 - **SpringArm / Orbit Camera:** Kamera engellerle kesiştiğinde sönümlü yakınlaşan 3. şahıs serbest kamera.
 
 ### D. Editör ve Kullanıcı Deneyimi (`rugeng_editor`)
-- **Godot 4 Tarzı Modüler Dock Düzeni:** Yeniden boyutlandırılabilir bölücüler (splitters).
-- **Çoklu Sahne Sekmeleri:** Birden fazla sahneyi aynı anda açma, sekmeler arası geçiş, kirli (`*`) bayrağı ve kapatma.
-- **Boş Sahne Şablonları:** Tek tıkla boş 2D (`Node2D_Root`) veya boş 3D (`World3D_Root` + `Ground_Plane` + `Center_Cube`) sahnesi oluşturma.
-- **Düğüm Kütüphanesi (Node Library Modal):** `[+]` butonu ile filtrelenebilir kategorik 2D/3D varlık ekleme penceresi.
-- **Bağlamsal Sağ Tık Menüsü:** Viewport üzerinde sağ tıklanan dünya koordinatına doğrudan nesne spawn etme.
-- **Dosya Sistemi (FileSystem):** Res:// tabanlı gezinme, tek tıkla `+ Klasör` ve `+ Sahne` oluşturma, çift tıkla sahne açma.
-- **Canlı Simülasyon ve Rollback:** Play/Stop ile editör içinde canlı fizik simülasyonu ve durdurulduğunda ilk konumlara tam geri dönüş.
-- **Tek Tıkla Export:** Varlıkları `.pak` ikili arşivinde toplayıp dağıtıma hazır hale getirme.
+- **Modüler Panel Mimarisi (`trait Panel`):** ~2650 satırlık monolitik girdi işleyici yerine bağımsız panellere ayrılmış `handle_mouse_click`.
+- **Denetçi (Inspector) Sayısal Metin Girişi:** Klavye ile doğrudan `f32` değer girişi, imleç gezinimi, geçersiz girişte kırmızı kenarlık geri bildirimi ve tam geri alma (Undo/Redo).
+- **Sahne Ağacı Sürükle & Bırak (Drag & Drop Reparenting):** `Before`/`Into`/`After` bırakma alanları, ata-döngü tespiti (`is_ancestor_of`) ile döngüsel hiyerarşi engelleme ve geri alma desteği.
+- **Çoklu Sahne Sekmeleri & Şablonlar:** 2D ve 3D boş şablonlar, sekme yönetimi, kirli (`*`) bayrağı.
+- **Düğüm Kütüphanesi & Bağlamsal Menü:** Tek tıkla veya sağ tık koordinatında hızlı varlık yerleştirme.
+- **Paralel Simülasyon & Rollback:** Simülasyon aşamalarının `SystemDAG` üzerinden eşzamanlı işletimi ve durdurulduğunda snapshot anına geri dönüş.
 
 ---
 
-## 5. Eksiklikler, Sınırlar ve Açık Alanlar (Teknik Analiz)
-
-Motor mimari olarak sağlam temellere oturmuş olsa da ticari seviyede bir oyun geliştirme ortamı için aşağıdaki kritik eksiklikler mevcuttur:
-
-### A. Render ve Grafik Eksiklikleri
-1. **Noktasal ve Spot Işıklar (Point/Spot Lights):** Şu an yalnızca tek bir yönlü ışık (Sun / Directional Light) desteklenmektedir. Çoklu ışıklandırma (Forward+ veya Clustered Shading) henüz eklenmemiştir.
-2. **Kaskadlı Gölge Haritaları (Cascaded Shadow Maps - CSM):** Mevcut gölge haritası tek bir ortografik kutu kullanır; geniş açık dünya sahnelerinde uzak mesafelerde gölge çözünürlüğü düşer.
-3. **glTF İskelet Doku/Ağırlık Yükleyicisi:** `rugeng_render` içindeki skinning iskeleti hazırdır ancak `rugeng_assets::gltf` tam animasyonlu glTF node hiyerarşisini henüz otomatik bağlamamaktadır.
-4. **Post-Processing Hattı:** Bloom, SSAO (Screen Space Ambient Occlusion), FXAA/TAA kenar yumuşatma filtreleri eksiktir.
-
-### B. Editör ve Araç Zinciri Eksiklikleri
-1. **Görsel Sahne Ağacı Sürükle-Bırak (Drag & Drop Reparenting):** Hiyerarşi kod seviyesinde (`set_parent`) desteklenirken, fareyle sürükleyip başka bir düğümün altına bırakma etkileşimi henüz görselleştirilmemiştir.
-2. **Metin Kutusu Girişleri (Inspector Input Fields):** Denetçi panelindeki koordinat ve boyut değerleri şu an `[-]` ve `[+]` butonlarıyla değiştirilmektedir; klavyeden doğrudan sayı yazma alanı eklenmelidir.
-3. **Görsel Eğri ve Animasyon Editörü:** Durum makinesi parametreleri kod tabanlıdır; Unity/Godot tarzı görsel durum geçiş grafiği (Animation Graph) yoktur.
-
-### C. Ses ve Fizik Eksiklikleri
-1. **3D Konumsal Ses (Spatial Audio):** PipeWire sürücüsü stereo PCM çalmaktadır; dinleyici ve ses kaynağı mesafesine göre zayıflama (distance attenuation) ve pan hesabı eklenmelidir.
-2. **Karmaşık 3D Konveks/Mesh Çözücü:** 3D fizik şu an AABB, Küre ve Kapsül ile sınırlıdır; rastgele meşler için Convex Hull veya GJK/EPA çarpışma çözücüsü bulunmamaktadır.
-
----
-
-## 6. Hızlı Başlangıç
+## 5. Hızlı Başlangıç
 
 Projeyi derlemek ve test etmek için `start.sh` betiği kullanılır:
 
@@ -128,3 +106,4 @@ Projeyi derlemek ve test etmek için `start.sh` betiği kullanılır:
 # Tüm statik analiz, Miri, Loom ve birim testlerini doğrula
 ./start.sh check
 ```
+
