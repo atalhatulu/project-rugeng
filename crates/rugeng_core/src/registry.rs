@@ -282,6 +282,29 @@ impl<S: SparseTable> Registry<S> {
         }
     }
 
+    /// Entity canlıysa bileşen ekler ve true döner; ölü veya geçersizse paniklemeden false döner.
+    #[inline]
+    pub fn emplace_checked<T: 'static + Send + Sync>(
+        &mut self,
+        entity: Entity,
+        component: T,
+    ) -> bool {
+        if !self.is_alive(entity) {
+            return false;
+        }
+        let type_id = TypeId::of::<T>();
+        self.pools.entry(type_id).or_insert_with(|| {
+            let cell: Box<StorageCell<T, S>> = Box::default();
+            cell
+        });
+        let cell = self.get_cell::<T>();
+        // SAFETY: `&mut self` olduğundan emplace esnasında eşzamanlı erişim yoktur.
+        unsafe {
+            cell.get_mut().insert(entity, component);
+        }
+        true
+    }
+
     /// Güvenli bileşen okuma. `&self` borçlanması ile bileşene erişir.
     #[inline]
     pub fn get<T: 'static + Send + Sync>(&self, entity: Entity) -> Option<&T> {
@@ -700,5 +723,17 @@ mod tests {
         assert_eq!(e3.generation(), 1);
         reg.emplace(e3, Pos(5.0, 6.0));
         assert_eq!(reg.get::<Pos>(e3), Some(&Pos(5.0, 6.0)));
+    }
+
+    #[test]
+    fn test_registry_emplace_checked() {
+        let mut reg = Registry::new();
+        let e1 = reg.create();
+        assert!(reg.emplace_checked(e1, Pos(10.0, 20.0)));
+        assert_eq!(reg.get::<Pos>(e1), Some(&Pos(10.0, 20.0)));
+
+        reg.destroy(e1);
+        // Destroyed entity must return false without panicking
+        assert!(!reg.emplace_checked(e1, Pos(30.0, 40.0)));
     }
 }

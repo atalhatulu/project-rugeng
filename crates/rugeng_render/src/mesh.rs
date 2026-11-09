@@ -181,7 +181,7 @@ impl Mesh3D {
             for (pos, uv) in quad {
                 vertices.push(Vertex3D::new(pos, normal, uv, color));
             }
-            // CCW sargı düzeni (Dışarıdan bakıldığında ön yüzey): (0, 2, 1) ve (0, 3, 2)
+            // CW (Clockwise) sargı düzeni (Vulkan FrontFace::CLOCKWISE ile uyumlu dış yüzey): (0, 2, 1) ve (0, 3, 2)
             indices.extend_from_slice(&[
                 base_idx,
                 base_idx + 2,

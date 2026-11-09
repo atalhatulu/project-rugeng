@@ -61,145 +61,36 @@ impl EditorTheme {
     }
 }
 
-pub fn draw_icon_play(
-    instances: &mut Vec<QuadInstance>,
-    x: f32,
-    y: f32,
-    size: f32,
-    color: [u8; 4],
-) {
-    let tri_w = (size * 0.85).round().max(4.0);
-    let cols = (tri_w as usize).max(6);
-    let step = tri_w / cols as f32;
-    for i in 0..cols {
-        let t = i as f32 / (cols - 1) as f32;
-        let h = (size * (1.0 - t * 0.88)).max(1.5);
-        let py = y + (size - h) * 0.5;
-        let px = x + i as f32 * step;
-        instances.push(QuadInstance::new([px, py], [step + 0.5, h], color, 0));
-    }
-}
+// Re-export play/pause/stop/step from rugeng_render to avoid duplication
+pub use rugeng_render::icons::{draw_icon_pause, draw_icon_play, draw_icon_step, draw_icon_stop};
 
-pub fn draw_icon_pause(
-    instances: &mut Vec<QuadInstance>,
-    x: f32,
-    y: f32,
-    size: f32,
-    color: [u8; 4],
-) {
-    let bar_w = (size * 0.28).round().max(2.5);
-    let gap = (size * 0.35).round().max(3.0);
-    instances.push(QuadInstance::new([x, y], [bar_w, size], color, 0));
-    instances.push(QuadInstance::new(
-        [x + bar_w + gap, y],
-        [bar_w, size],
-        color,
-        0,
-    ));
-}
-
-pub fn draw_icon_stop(
-    instances: &mut Vec<QuadInstance>,
-    x: f32,
-    y: f32,
-    size: f32,
-    color: [u8; 4],
-) {
-    instances.push(QuadInstance::new([x, y], [size, size], color, 0));
-}
-
-pub fn draw_icon_step(
-    instances: &mut Vec<QuadInstance>,
-    x: f32,
-    y: f32,
-    size: f32,
-    color: [u8; 4],
-) {
-    let bar_w = (size * 0.22).round().max(2.0);
-    let tri_w = (size - bar_w - 2.5).max(4.0);
-    let cols = (tri_w as usize).max(5);
-    let step = tri_w / cols as f32;
-    for i in 0..cols {
-        let t = i as f32 / (cols - 1) as f32;
-        let h = (size * (1.0 - t * 0.88)).max(1.5);
-        let py = y + (size - h) * 0.5;
-        let px = x + i as f32 * step;
-        instances.push(QuadInstance::new([px, py], [step + 0.5, h], color, 0));
-    }
-    let bar_x = x + tri_w + 2.0;
-    instances.push(QuadInstance::new([bar_x, y], [bar_w, size], color, 0));
-}
-
+// Viewport tool icons wrapper delegating to rugeng_render with default tool size (12.0)
+#[inline]
 pub fn draw_icon_select(instances: &mut Vec<QuadInstance>, x: f32, y: f32, color: [u8; 4]) {
-    instances.push(QuadInstance::new([x, y], [2.0, 10.0], color, 0));
-    instances.push(QuadInstance::new([x, y], [8.0, 2.0], color, 0));
-    instances.push(QuadInstance::new([x + 2.0, y + 2.0], [4.0, 2.0], color, 0));
-    instances.push(QuadInstance::new([x + 3.0, y + 4.0], [3.0, 2.0], color, 0));
-    instances.push(QuadInstance::new([x + 4.0, y + 6.0], [3.0, 2.5], color, 0));
-    instances.push(QuadInstance::new([x + 5.0, y + 8.0], [2.5, 3.0], color, 0));
+    rugeng_render::icons::draw_icon_select(instances, x, y, 12.0, color);
 }
 
+#[inline]
 pub fn draw_icon_move(instances: &mut Vec<QuadInstance>, x: f32, y: f32, color: [u8; 4]) {
-    instances.push(QuadInstance::new([x + 4.0, y + 1.0], [2.0, 9.0], color, 0));
-    instances.push(QuadInstance::new([x + 1.0, y + 4.0], [9.0, 2.0], color, 0));
-    instances.push(QuadInstance::new([x + 3.0, y], [4.0, 1.5], color, 0));
-    instances.push(QuadInstance::new([x + 3.0, y + 9.0], [4.0, 1.5], color, 0));
-    instances.push(QuadInstance::new([x, y + 3.0], [1.5, 4.0], color, 0));
-    instances.push(QuadInstance::new([x + 9.0, y + 3.0], [1.5, 4.0], color, 0));
+    rugeng_render::icons::draw_icon_move(instances, x, y, 12.0, color);
 }
 
+#[inline]
 pub fn draw_icon_rotate(instances: &mut Vec<QuadInstance>, x: f32, y: f32, color: [u8; 4]) {
-    instances.push(QuadInstance::new([x + 2.0, y], [6.0, 1.5], color, 0));
-    instances.push(QuadInstance::new([x, y + 2.0], [1.5, 6.0], color, 0));
-    instances.push(QuadInstance::new([x + 2.0, y + 8.0], [6.0, 1.5], color, 0));
-    instances.push(QuadInstance::new([x + 6.5, y + 1.5], [2.5, 3.5], color, 0));
-    instances.push(QuadInstance::new([x + 8.0, y + 3.5], [2.0, 2.0], color, 0));
+    rugeng_render::icons::draw_icon_rotate(instances, x, y, 12.0, color);
 }
 
+#[inline]
 pub fn draw_icon_scale(instances: &mut Vec<QuadInstance>, x: f32, y: f32, color: [u8; 4]) {
-    instances.push(QuadInstance::new([x, y], [7.0, 1.5], color, 0));
-    instances.push(QuadInstance::new([x, y], [1.5, 7.0], color, 0));
-    instances.push(QuadInstance::new([x + 4.0, y + 4.0], [6.0, 1.5], color, 0));
-    instances.push(QuadInstance::new([x + 4.0, y + 8.5], [6.0, 1.5], color, 0));
-    instances.push(QuadInstance::new([x + 4.0, y + 4.0], [1.5, 6.0], color, 0));
-    instances.push(QuadInstance::new([x + 8.5, y + 4.0], [1.5, 6.0], color, 0));
+    rugeng_render::icons::draw_icon_scale(instances, x, y, 12.0, color);
 }
 
+#[inline]
 pub fn draw_icon_brush(instances: &mut Vec<QuadInstance>, x: f32, y: f32, color: [u8; 4]) {
-    instances.push(QuadInstance::new(
-        [x + 6.0, y],
-        [3.0, 3.0],
-        [180, 140, 100, 255],
-        0,
-    ));
-    instances.push(QuadInstance::new(
-        [x + 4.0, y + 2.0],
-        [3.0, 3.0],
-        [180, 140, 100, 255],
-        0,
-    ));
-    instances.push(QuadInstance::new(
-        [x + 3.0, y + 4.0],
-        [3.5, 2.5],
-        [160, 170, 185, 255],
-        0,
-    ));
-    instances.push(QuadInstance::new([x + 1.0, y + 6.0], [4.5, 4.0], color, 0));
-    instances.push(QuadInstance::new([x, y + 8.0], [3.5, 3.0], color, 0));
+    rugeng_render::icons::draw_icon_brush(instances, x, y, 12.0, color);
 }
 
+#[inline]
 pub fn draw_icon_eraser(instances: &mut Vec<QuadInstance>, x: f32, y: f32, color: [u8; 4]) {
-    instances.push(QuadInstance::new([x + 2.0, y + 3.0], [7.0, 5.0], color, 0));
-    instances.push(QuadInstance::new(
-        [x + 4.0, y],
-        [5.0, 3.5],
-        [248, 113, 113, 255],
-        0,
-    ));
-    instances.push(QuadInstance::new(
-        [x + 1.0, y + 7.5],
-        [6.0, 1.5],
-        [180, 185, 195, 255],
-        0,
-    ));
+    rugeng_render::icons::draw_icon_eraser(instances, x, y, 12.0, color);
 }

@@ -11,6 +11,9 @@ use crate::mesh::Vertex3D;
 pub const VERT_3D_SPV: &[u8] = include_bytes!("../shaders/mesh_3d.vert.spv");
 pub const FRAG_3D_SPV: &[u8] = include_bytes!("../shaders/mesh_3d.frag.spv");
 
+/// Maksimum iskelet kemik sayısı (128 kemik * 64 bayt = 8192 bayt SSBO)
+pub const MAX_JOINTS: usize = 128;
+
 /// Push Constants (256 bayt: mat4 vp, mat4 model, mat4 light_space, vec4 light_dir_amb, vec4 light_col, vec4 cam_pos, vec4 pbr_params, u32 bone_count, u32 light_count + 2x u32 pad)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -417,7 +420,7 @@ impl Pipeline3D {
         let buffer_info = vk::DescriptorBufferInfo::default()
             .buffer(dummy_buffer)
             .offset(0)
-            .range(8192);
+            .range((MAX_JOINTS * 64) as u64);
 
         let light_buffer_info = vk::DescriptorBufferInfo::default()
             .buffer(dummy_light_buffer)
