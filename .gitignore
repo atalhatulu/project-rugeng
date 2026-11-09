@@ -1,6 +1,24 @@
-/target
+# Rust derleme ciktilari
+/target/
+**/*.rs.bk
+
+# Gecici gunluk ve profil dosyalari
 *.log
+*.profraw
+*.profdata
+*.criterion
+
+# Sahne yedekleri ve gecici paketler
 scenes/*.scene.bak
+dist/
+*.pak
+
+# Gecici shader ciktilari (Sadece reponun orijinal shader binaryleri haric)
 *.spv
 !crates/rugeng_render/shaders/*.spv
 
+# Dizin ve isletim sistemi dosyalari
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
