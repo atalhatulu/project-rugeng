@@ -22,8 +22,8 @@ pub mod types;
 
 pub use animation::{Animation2DComponent, AnimationClip, AnimationStateMachine, StateTransition};
 pub use animation_3d::{
-    Animation3DComponent, AnimationChannel3D, AnimationClip3D, AnimationProperty, Interpolation,
-    Joint, Skeleton, MAX_JOINTS,
+    Animation3DComponent, AnimationChannel3D, AnimationClip3D, AnimationProperty, AnimationState3D,
+    AnimationStateMachine3D, Interpolation, Joint, Skeleton, MAX_JOINTS,
 };
 pub use arena::{FrameArena, ScopedScratch, DEFAULT_ARENA_CAPACITY};
 pub use audio::{
