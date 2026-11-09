@@ -69,7 +69,61 @@ impl App {
                         );
                     }
 
-                    // B. Sahnedeki 3D Varlıklar
+                    // B. Sahnedeki Noktasal Işıkları Topla ve SSBO'ya Aktar
+                    let point_lights: Vec<(Transform3D, rugeng_core::PointLight)> = self
+                        .registry
+                        .entities::<rugeng_core::PointLight>()
+                        .into_iter()
+                        .filter_map(|e| {
+                            let pl = self.registry.get::<rugeng_core::PointLight>(e).copied()?;
+                            let t3 = self
+                                .registry
+                                .get::<Transform3D>(e)
+                                .copied()
+                                .unwrap_or_else(|| Transform3D::from_xyz(0.0, 0.0, 0.0));
+                            Some((t3, pl))
+                        })
+                        .collect();
+
+                    let num_lights = point_lights.len().min(64) as u32;
+                    if num_lights > 0 {
+                        let mut gpu_lights = [rugeng_render::GpuPointLight {
+                            position: [0.0; 4],
+                            color: [0.0; 4],
+                        }; 64];
+                        for (idx, (t3, pl)) in point_lights.iter().take(64).enumerate() {
+                            gpu_lights[idx] = rugeng_render::GpuPointLight {
+                                position: [
+                                    t3.translation.x,
+                                    t3.translation.y,
+                                    t3.translation.z,
+                                    pl.radius,
+                                ],
+                                color: [pl.color[0], pl.color[1], pl.color[2], pl.intensity],
+                            };
+                        }
+                        pipe_3d
+                            .upload_point_lights(&ctx.device, &gpu_lights[0..num_lights as usize]);
+                    }
+
+                    // C. Cascaded Shadow Maps (CSM) Verisini Yükle (Binding 5)
+                    let csm_splits = rugeng_render::DirectionalLight::calculate_csm_splits(
+                        render_cam.z_near,
+                        250.0,
+                        0.75,
+                    );
+                    let csm_mats = self.sun.csm_matrices(&render_cam, csm_splits);
+                    let mut csm_mat_arrays = [[0.0f32; 16]; 4];
+                    for i in 0..4 {
+                        csm_mat_arrays[i] = csm_mats[i].to_cols_array();
+                    }
+                    let gpu_csm = rugeng_render::GpuCsmData {
+                        csm_light_space: csm_mat_arrays,
+                        split_distances: csm_splits,
+                    };
+                    pipe_3d.upload_csm_data(&ctx.device, &gpu_csm);
+
+                    // D. Sahnedeki 3D Varlıklar
                     let entities_3d: Vec<(Entity, Transform3D, Mesh3DComponent)> = self
                         .registry
                         .entities::<Transform3D>()
@@ -109,7 +163,7 @@ impl App {
                             };
                             let metallic = m3.metallic;
 
-                            pipe_3d.draw_mesh_pbr_viewport(
+                            pipe_3d.draw_mesh_pbr_viewport_ext_with_lights(
                                 &ctx.device,
                                 cmd,
                                 &render_cam,
@@ -120,6 +174,9 @@ impl App {
                                 roughness,
                                 metallic,
                                 false,
+                                false,
+                                None,
+                                num_lights,
                                 vp_x,
                                 vp_canvas_y,
                                 vp_w,

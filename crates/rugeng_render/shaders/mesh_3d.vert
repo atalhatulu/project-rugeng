@@ -14,7 +14,11 @@ layout(push_constant) uniform PushConstants {
     vec4 light_dir_ambient; // xyz: light_dir (normalized pointing toward light), w: ambient_intensity
     vec4 light_color;       // xyz: light_color, w: specular_shininess
     vec4 camera_pos;        // xyz: camera_pos, w: unused
-    vec4 pbr_params;        // x: roughness, y: metallic, z: has_mr_texture, w: bone_count (as uint in bits)
+    vec4 pbr_params;        // x: roughness, y: metallic, z: has_mr_texture, w: unused
+    uint bone_count;        // ciltleme kemik sayısı
+    uint light_count;       // noktasal ışık sayısı
+    uint pad0;
+    uint pad1;
 } pc;
 
 layout(std430, set = 0, binding = 3) readonly buffer JointMatrices {
@@ -28,7 +32,7 @@ layout(location = 3) out vec4 out_color;
 layout(location = 4) out vec4 out_light_space_pos;
 
 void main() {
-    uint bone_count = floatBitsToUint(pc.pbr_params.w);
+    uint bone_count = pc.bone_count;
     vec4 local_pos = vec4(in_position, 1.0);
     vec3 local_normal = in_normal;
 

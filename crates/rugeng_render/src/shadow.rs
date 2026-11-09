@@ -172,7 +172,7 @@ impl DirectionalShadowMap {
                 base_mip_level: 0,
                 level_count: 1,
                 base_array_layer: 0,
-                layer_count: 1,
+                layer_count: Self::CASCADE_COUNT,
             });
 
         let dependency =
@@ -197,7 +197,7 @@ impl DirectionalShadowMap {
                 base_mip_level: 0,
                 level_count: 1,
                 base_array_layer: 0,
-                layer_count: 1,
+                layer_count: Self::CASCADE_COUNT,
             });
 
         let dependency =

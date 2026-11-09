@@ -347,3 +347,33 @@ impl NodeName {
         Self { name: name.into() }
     }
 }
+
+/// 3D Noktasal Işık Bileşeni (Point Light).
+///
+/// Renk (RGB), Işık Şiddeti (Intensity) ve Etki Yarıçapı (Radius / Range).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PointLight {
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub radius: f32,
+}
+
+impl Default for PointLight {
+    fn default() -> Self {
+        Self {
+            color: [1.0, 1.0, 1.0],
+            intensity: 1.0,
+            radius: 10.0,
+        }
+    }
+}
+
+impl PointLight {
+    pub fn new(color: [f32; 3], intensity: f32, radius: f32) -> Self {
+        Self {
+            color,
+            intensity: intensity.max(0.0),
+            radius: radius.max(0.01),
+        }
+    }
+}

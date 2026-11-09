@@ -11,7 +11,7 @@ use crate::mesh::Vertex3D;
 pub const VERT_3D_SPV: &[u8] = include_bytes!("../shaders/mesh_3d.vert.spv");
 pub const FRAG_3D_SPV: &[u8] = include_bytes!("../shaders/mesh_3d.frag.spv");
 
-/// Push Constants (256 bayt: mat4 vp, mat4 model, mat4 light_space, vec4 light_dir_amb, vec4 light_col, vec4 cam_pos, vec4 pbr_params, u32 bone_count + 3x u32 pad)
+/// Push Constants (256 bayt: mat4 vp, mat4 model, mat4 light_space, vec4 light_dir_amb, vec4 light_col, vec4 cam_pos, vec4 pbr_params, u32 bone_count, u32 light_count + 2x u32 pad)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct PushConstants3D {
@@ -23,6 +23,24 @@ pub struct PushConstants3D {
     pub camera_pos_flags: [f32; 4],      // 16 bayt (xyz: pos, w: has_texture)
     pub pbr_params: [f32; 3],            // 12 bayt (x: roughness, y: metallic, z: has_mr_texture)
     pub bone_count: u32,                 // 4 bayt (ciltleme kemik sayısı: 0 ise statik meş)
+    pub light_count: u32,                // 4 bayt (noktasal ışık sayısı: 0..64)
+    pub _pad: [u32; 2],                  // 8 bayt padding (Toplam: tam 256 bayt)
+}
+
+/// GPU Noktasal Işık Verisi (SSBO binding 4: 32 bayt per light)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct GpuPointLight {
+    pub position: [f32; 4], // xyz: position, w: radius
+    pub color: [f32; 4],    // xyz: color, w: intensity
+}
+
+/// GPU CSM Kaskad Matris ve Split Bilgisi (SSBO binding 5: 4 * 64 + 16 = 272 bayt)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct GpuCsmData {
+    pub csm_light_space: [[f32; 16]; 4], // 256 bayt (4 kaskadın Proj * View matrisleri)
+    pub split_distances: [f32; 4],       // 16 bayt (4 kaskadın sınır derinlikleri)
 }
 
 pub struct Pipeline3D {
@@ -33,6 +51,10 @@ pub struct Pipeline3D {
     pub dummy_descriptor_set: vk::DescriptorSet,
     pub dummy_buffer: vk::Buffer,
     pub dummy_memory: vk::DeviceMemory,
+    pub dummy_light_buffer: vk::Buffer,
+    pub dummy_light_memory: vk::DeviceMemory,
+    pub dummy_csm_buffer: vk::Buffer,
+    pub dummy_csm_memory: vk::DeviceMemory,
 }
 
 impl Pipeline3D {
@@ -46,8 +68,10 @@ impl Pipeline3D {
         // 1. Descriptor Set Layout
         // Binding 0: albedo texture (FRAGMENT)
         // Binding 1: metallic-roughness texture (FRAGMENT)
-        // Binding 2: shadow map (FRAGMENT)
+        // Binding 2: shadow map array (FRAGMENT)
         // Binding 3: joint matrices SSBO (VERTEX)
+        // Binding 4: point lights SSBO (FRAGMENT)
+        // Binding 5: CSM matrices & split distances SSBO (FRAGMENT)
         let bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(0)
@@ -69,6 +93,16 @@ impl Pipeline3D {
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::VERTEX),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(4)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(5)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
         ];
 
         let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
@@ -263,7 +297,7 @@ impl Pipeline3D {
                 .descriptor_count(24),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(8),
+                .descriptor_count(16),
         ];
 
         let pool_info = vk::DescriptorPoolCreateInfo::default()
@@ -292,7 +326,7 @@ impl Pipeline3D {
             .image_view(default_image_view)
             .sampler(default_sampler);
 
-        // Dummy SSBO oluştur (128 Mat4 = 8192 bayt)
+        // Dummy SSBO oluştur (128 Mat4 = 8192 bayt - Binding 3: Joints)
         let dummy_buffer_info = vk::BufferCreateInfo::default()
             .size(8192)
             .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
@@ -322,10 +356,78 @@ impl Pipeline3D {
                 .map_err(|e| format!("Dummy joint memory baglanamadi: {e}"))?;
         }
 
+        // Dummy Light SSBO oluştur (64 GpuPointLight * 32 bayt = 2048 bayt - Binding 4: Point Lights)
+        let dummy_light_buffer_info = vk::BufferCreateInfo::default()
+            .size(2048)
+            .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+        let dummy_light_buffer = unsafe {
+            device
+                .create_buffer(&dummy_light_buffer_info, None)
+                .map_err(|e| format!("Dummy light buffer olusturulamadi: {e}"))?
+        };
+
+        let light_mem_reqs = unsafe { device.get_buffer_memory_requirements(dummy_light_buffer) };
+        let light_mem_prop = vk::MemoryAllocateInfo::default()
+            .allocation_size(light_mem_reqs.size)
+            .memory_type_index(0);
+
+        let dummy_light_memory = unsafe {
+            device
+                .allocate_memory(&light_mem_prop, None)
+                .map_err(|e| format!("Dummy light memory allocate basarisiz: {e}"))?
+        };
+
+        unsafe {
+            device
+                .bind_buffer_memory(dummy_light_buffer, dummy_light_memory, 0)
+                .map_err(|e| format!("Dummy light memory baglanamadi: {e}"))?;
+        }
+
+        // Dummy CSM SSBO oluştur (GpuCsmData = 272 bayt - Binding 5: CSM matrices)
+        let dummy_csm_buffer_info = vk::BufferCreateInfo::default()
+            .size(512)
+            .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+        let dummy_csm_buffer = unsafe {
+            device
+                .create_buffer(&dummy_csm_buffer_info, None)
+                .map_err(|e| format!("Dummy csm buffer olusturulamadi: {e}"))?
+        };
+
+        let csm_mem_reqs = unsafe { device.get_buffer_memory_requirements(dummy_csm_buffer) };
+        let csm_mem_prop = vk::MemoryAllocateInfo::default()
+            .allocation_size(csm_mem_reqs.size)
+            .memory_type_index(0);
+
+        let dummy_csm_memory = unsafe {
+            device
+                .allocate_memory(&csm_mem_prop, None)
+                .map_err(|e| format!("Dummy csm memory allocate basarisiz: {e}"))?
+        };
+
+        unsafe {
+            device
+                .bind_buffer_memory(dummy_csm_buffer, dummy_csm_memory, 0)
+                .map_err(|e| format!("Dummy csm memory baglanamadi: {e}"))?;
+        }
+
         let buffer_info = vk::DescriptorBufferInfo::default()
             .buffer(dummy_buffer)
             .offset(0)
             .range(8192);
+
+        let light_buffer_info = vk::DescriptorBufferInfo::default()
+            .buffer(dummy_light_buffer)
+            .offset(0)
+            .range(2048);
+
+        let csm_buffer_info = vk::DescriptorBufferInfo::default()
+            .buffer(dummy_csm_buffer)
+            .offset(0)
+            .range(512);
 
         let writes = [
             vk::WriteDescriptorSet::default()
@@ -348,6 +450,16 @@ impl Pipeline3D {
                 .dst_binding(3)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(std::slice::from_ref(&buffer_info)),
+            vk::WriteDescriptorSet::default()
+                .dst_set(dummy_descriptor_set)
+                .dst_binding(4)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(std::slice::from_ref(&light_buffer_info)),
+            vk::WriteDescriptorSet::default()
+                .dst_set(dummy_descriptor_set)
+                .dst_binding(5)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(std::slice::from_ref(&csm_buffer_info)),
         ];
 
         unsafe {
@@ -362,6 +474,10 @@ impl Pipeline3D {
             dummy_descriptor_set,
             dummy_buffer,
             dummy_memory,
+            dummy_light_buffer,
+            dummy_light_memory,
+            dummy_csm_buffer,
+            dummy_csm_memory,
         })
     }
 
@@ -420,6 +536,8 @@ impl Pipeline3D {
                 ],
                 pbr_params: [0.5, 0.0, 0.0],
                 bone_count: 0,
+                light_count: 0,
+                _pad: [0, 0],
             };
 
             let push_bytes = bytemuck::bytes_of(&push_data);
@@ -538,6 +656,49 @@ impl Pipeline3D {
         vp_w: f32,
         vp_h: f32,
     ) {
+        self.draw_mesh_pbr_viewport_ext_with_lights(
+            device,
+            cmd,
+            camera,
+            mesh,
+            model_matrix,
+            sun,
+            ambient,
+            roughness,
+            metallic,
+            has_texture,
+            has_mr_texture,
+            descriptor_set,
+            0,
+            vp_x,
+            vp_y,
+            vp_w,
+            vp_h,
+        );
+    }
+
+    /// PBR materyal, doku seti ve noktasal ışık sayısı ile detaylı Viewport / Scissor çizimi
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_mesh_pbr_viewport_ext_with_lights(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        camera: &Camera3D,
+        mesh: &GpuMesh3D,
+        model_matrix: Mat4,
+        sun: &DirectionalLight,
+        ambient: &AmbientLight,
+        roughness: f32,
+        metallic: f32,
+        has_texture: bool,
+        has_mr_texture: bool,
+        descriptor_set: Option<vk::DescriptorSet>,
+        light_count: u32,
+        vp_x: f32,
+        vp_y: f32,
+        vp_w: f32,
+        vp_h: f32,
+    ) {
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 
@@ -584,6 +745,8 @@ impl Pipeline3D {
                 ],
                 pbr_params: [roughness, metallic, if has_mr_texture { 1.0 } else { 0.0 }],
                 bone_count: 0,
+                light_count,
+                _pad: [0, 0],
             };
 
             let push_bytes = bytemuck::bytes_of(&push_data);
@@ -609,6 +772,50 @@ impl Pipeline3D {
         }
     }
 
+    /// Noktasal ışıkları GPU SSBO dummy_light_memory alanına yükler
+    pub fn upload_point_lights(&self, device: &ash::Device, lights: &[GpuPointLight]) {
+        let count = lights.len().min(64);
+        if count == 0 {
+            return;
+        }
+        let light_bytes = bytemuck::cast_slice(&lights[0..count]);
+        unsafe {
+            if let Ok(data_ptr) = device.map_memory(
+                self.dummy_light_memory,
+                0,
+                light_bytes.len() as u64,
+                ash::vk::MemoryMapFlags::empty(),
+            ) {
+                std::ptr::copy_nonoverlapping(
+                    light_bytes.as_ptr(),
+                    data_ptr as *mut u8,
+                    light_bytes.len(),
+                );
+                device.unmap_memory(self.dummy_light_memory);
+            }
+        }
+    }
+
+    /// CSM kaskad matrislerini ve split sınırlarını GPU SSBO dummy_csm_memory alanına yükler
+    pub fn upload_csm_data(&self, device: &ash::Device, csm_data: &GpuCsmData) {
+        let csm_bytes = bytemuck::bytes_of(csm_data);
+        unsafe {
+            if let Ok(data_ptr) = device.map_memory(
+                self.dummy_csm_memory,
+                0,
+                csm_bytes.len() as u64,
+                ash::vk::MemoryMapFlags::empty(),
+            ) {
+                std::ptr::copy_nonoverlapping(
+                    csm_bytes.as_ptr(),
+                    data_ptr as *mut u8,
+                    csm_bytes.len(),
+                );
+                device.unmap_memory(self.dummy_csm_memory);
+            }
+        }
+    }
+
     pub fn destroy(&mut self, device: &ash::Device) {
         unsafe {
             device.destroy_pipeline(self.pipeline, None);
@@ -617,6 +824,10 @@ impl Pipeline3D {
             device.destroy_descriptor_pool(self.descriptor_pool, None);
             device.destroy_buffer(self.dummy_buffer, None);
             device.free_memory(self.dummy_memory, None);
+            device.destroy_buffer(self.dummy_light_buffer, None);
+            device.free_memory(self.dummy_light_memory, None);
+            device.destroy_buffer(self.dummy_csm_buffer, None);
+            device.free_memory(self.dummy_csm_memory, None);
         }
     }
 }

@@ -204,6 +204,7 @@ fn entity_to_scene_entity(
     let animation_3d = registry
         .get::<crate::animation_3d::Animation3DComponent>(e)
         .cloned();
+    let point_light = registry.get::<crate::components::PointLight>(e).copied();
 
     Ok(SceneEntity {
         id: e.index(),
@@ -227,6 +228,7 @@ fn entity_to_scene_entity(
         z_index,
         particle,
         animation_3d,
+        point_light,
     })
 }
 
@@ -313,6 +315,9 @@ fn scene_entity_to_registry(
     }
     if let Some(anim3d) = &item.animation_3d {
         registry.emplace(e, anim3d.clone());
+    }
+    if let Some(pl) = item.point_light {
+        registry.emplace(e, pl);
     }
 
     e

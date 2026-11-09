@@ -32,7 +32,7 @@ pub use audio::{
 };
 pub use command_buffer::CommandBuffer;
 pub use components::{
-    ButtonState, Collider2D, Mesh3DComponent, NodeName, SpriteColor, SpriteTexture,
+    ButtonState, Collider2D, Mesh3DComponent, NodeName, PointLight, SpriteColor, SpriteTexture,
     Text2DComponent, Transform2D, UIButton2D, UIMenu2D, Velocity2D, ZIndex2D,
 };
 pub use hierarchy::{compute_world_transform, Children, Parent};
@@ -142,6 +142,7 @@ mod tests {
                 emitter
             }),
             animation_3d: None,
+            point_light: None,
         });
 
         let json = scene.to_json().expect("JSON serilestirme basarisiz");
@@ -178,6 +179,7 @@ mod tests {
             z_index: 0,
             particle: Some(emitter),
             animation_3d: None,
+            point_light: None,
         });
 
         let json = scene.to_json().expect("JSON serilestirme basarisiz");
@@ -284,6 +286,7 @@ mod node_name_tests {
             mesh_3d: None,
             particle: None,
             animation_3d: None,
+            point_light: None,
         });
         let json = serde_json::to_string(&scene).unwrap();
         let back: SceneData = serde_json::from_str(&json).unwrap();

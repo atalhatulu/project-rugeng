@@ -404,6 +404,14 @@ impl App {
             Mesh3DComponent::with_pbr("sphere", [0.3, 0.6, 0.9, 1.0], 0.1, 0.8),
         );
 
+        // 3D Örnek Noktasal Işık (PointLight: altın sarısı lamba)
+        let e_light = registry.create();
+        registry.emplace(e_light, Transform3D::from_xyz(0.0, 3.0, 1.5));
+        registry.emplace(
+            e_light,
+            rugeng_core::PointLight::new([1.0, 0.85, 0.5], 2.5, 12.0),
+        );
+
         Self {
             window: None,
             context: None,

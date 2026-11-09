@@ -13,10 +13,13 @@ pub mod pipeline_3d;
 pub mod shadow;
 pub mod texture;
 pub mod theme;
+pub mod tonemap;
 
 pub use camera_3d::{AmbientLight, Camera3D, DirectionalLight, OrbitCamera3D, SpringArm3D};
 pub use context::{Swapchain, VulkanContext, FRAMES_IN_FLIGHT};
-pub use depth::{DepthBuffer, DirectionalShadowMap, DEPTH_FORMAT};
+pub use depth::{
+    DepthBuffer, DirectionalShadowMap, HdrRenderTarget, DEPTH_FORMAT, HDR_COLOR_FORMAT,
+};
 pub use font::TrueTypeFont;
 pub use gpu_mesh::GpuMesh3D;
 pub use icons::*;
@@ -24,10 +27,11 @@ pub use mesh::{Mesh3D, Vertex3D};
 pub use pipeline_2d::{
     Pipeline2D, QuadInstance, BUFFER_SIZE_PER_FRAME, MAX_QUADS_PER_FRAME, QUAD_INSTANCE_SIZE,
 };
-pub use pipeline_3d::{Pipeline3D, PushConstants3D};
+pub use pipeline_3d::{GpuCsmData, GpuPointLight, Pipeline3D, PushConstants3D};
 pub use shadow::{create_shadow_sampler, ShadowPipeline3D, ShadowPushConstants};
 pub use texture::{decode_png, AtlasSubRegion, TextureAtlas};
 pub use theme::Theme;
+pub use tonemap::{TonemapPipeline, TonemapPushConstants};
 
 #[cfg(test)]
 mod tests {

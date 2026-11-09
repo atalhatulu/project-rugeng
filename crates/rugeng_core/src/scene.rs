@@ -50,6 +50,8 @@ pub struct SceneEntity {
     pub particle: Option<crate::particle::ParticleEmitterComponent>,
     #[serde(default)]
     pub animation_3d: Option<crate::animation_3d::Animation3DComponent>,
+    #[serde(default)]
+    pub point_light: Option<crate::components::PointLight>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

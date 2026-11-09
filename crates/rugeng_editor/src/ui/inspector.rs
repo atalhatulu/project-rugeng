@@ -441,6 +441,58 @@ impl App {
                 );
                 cur_insp_y += sl_h + 8.0;
 
+                // BİLEŞEN: [ Point Light ]
+                if let Some(pl) = self.registry.get::<rugeng_core::PointLight>(e) {
+                    let pl_h = 72.0;
+                    let pl_y = cur_insp_y;
+                    instances.push(QuadInstance::new(
+                        [insp_x + 8.0, pl_y],
+                        [right_w - 16.0, pl_h],
+                        theme.card_bg,
+                        0,
+                    ));
+                    instances.push(QuadInstance::new(
+                        [insp_x + 8.0, pl_y],
+                        [right_w - 16.0, 20.0],
+                        theme.card_header,
+                        0,
+                    ));
+                    instances.push(QuadInstance::new(
+                        [insp_x + 8.0, pl_y],
+                        [right_w - 16.0, 1.0],
+                        theme.border_subtle,
+                        0,
+                    ));
+                    font::draw_text(
+                        instances,
+                        "v Point Light (Forward SSBO)",
+                        insp_x + 14.0,
+                        pl_y + 4.0,
+                        1.25,
+                        [255, 180, 50, 255],
+                    );
+                    font::draw_text(
+                        instances,
+                        &format!(
+                            "Col: ({:.2}, {:.2}, {:.2}) | Int: {:.1}",
+                            pl.color[0], pl.color[1], pl.color[2], pl.intensity
+                        ),
+                        insp_x + 14.0,
+                        pl_y + 26.0,
+                        1.1,
+                        text_norm,
+                    );
+                    font::draw_text(
+                        instances,
+                        &format!("Radius: {:.1} units | Atten: Inverse-Square", pl.radius),
+                        insp_x + 14.0,
+                        pl_y + 46.0,
+                        1.05,
+                        godot_blue,
+                    );
+                    cur_insp_y += pl_h + 8.0;
+                }
+
                 // BİLEŞEN: [ 3D Collider & Ray Picking ]
                 let col3d_h = 70.0;
                 let col3d_y = cur_insp_y;

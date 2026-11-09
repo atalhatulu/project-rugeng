@@ -4,8 +4,8 @@ use glam::Vec2;
 use rugeng_assets::VersionedScene;
 use rugeng_core::{
     Animation2DComponent, Animation3DComponent, AnimationClip, Children, Collider2D, Entity,
-    Mesh3DComponent, NodeName, Parent, ParticleEmitterComponent, Prefab, SceneData, SceneEntity,
-    ScriptComponent, SpriteColor, SpriteTexture, Text2DComponent, TileData, TileType,
+    Mesh3DComponent, NodeName, Parent, ParticleEmitterComponent, PointLight, Prefab, SceneData,
+    SceneEntity, ScriptComponent, SpriteColor, SpriteTexture, Text2DComponent, TileData, TileType,
     Tilemap2DComponent, Transform2D, Transform3D, Velocity2D, ZIndex2D,
 };
 
@@ -55,6 +55,7 @@ impl App {
                 cfg
             });
             let animation_3d = self.registry.get::<Animation3DComponent>(e).cloned();
+            let point_light = self.registry.get::<PointLight>(e).copied();
 
             scene.entities.push(SceneEntity {
                 id: e.index(),
@@ -78,6 +79,7 @@ impl App {
                 z_index,
                 particle,
                 animation_3d,
+                point_light,
             });
         }
 
@@ -94,6 +96,7 @@ impl App {
                 .get::<ScriptComponent>(e)
                 .map(|s| s.name.clone());
             let animation_3d = self.registry.get::<Animation3DComponent>(e).cloned();
+            let point_light = self.registry.get::<PointLight>(e).copied();
 
             scene.entities.push(SceneEntity {
                 id: e.index(),
@@ -117,6 +120,7 @@ impl App {
                 z_index: 0,
                 particle: None,
                 animation_3d,
+                point_light,
             });
         }
 
@@ -195,6 +199,7 @@ impl App {
                 cfg
             });
             let animation_3d = self.registry.get::<Animation3DComponent>(e).cloned();
+            let point_light = self.registry.get::<PointLight>(e).copied();
 
             scene.entities.push(SceneEntity {
                 id: e.index(),
@@ -218,6 +223,7 @@ impl App {
                 z_index,
                 particle,
                 animation_3d,
+                point_light,
             });
         }
 
@@ -234,6 +240,7 @@ impl App {
                 .get::<ScriptComponent>(e)
                 .map(|s| s.name.clone());
             let animation_3d = self.registry.get::<Animation3DComponent>(e).cloned();
+            let point_light = self.registry.get::<PointLight>(e).copied();
 
             scene.entities.push(SceneEntity {
                 id: e.index(),
@@ -257,6 +264,7 @@ impl App {
                 z_index: 0,
                 particle: None,
                 animation_3d,
+                point_light,
             });
         }
 
@@ -387,6 +395,9 @@ impl App {
                     }
                     if let Some(anim3d) = &item.animation_3d {
                         self.registry.emplace(e, anim3d.clone());
+                    }
+                    if let Some(pl) = item.point_light {
+                        self.registry.emplace(e, pl);
                     }
                 }
 

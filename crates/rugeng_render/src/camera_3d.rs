@@ -75,6 +75,88 @@ impl DirectionalLight {
         let proj = self.light_projection_matrix(ortho_size, z_near, z_far);
         proj * view
     }
+
+    /// 4 Kademeli Pratik Ayrım (Practical Split Scheme: Logaritmik + Lineer Ağırlıklı Harman)
+    /// Lambda (0.75 varsayılan): 1.0 = saf logaritmik, 0.0 = saf lineer.
+    pub fn calculate_csm_splits(z_near: f32, z_far: f32, lambda: f32) -> [f32; 4] {
+        let near = z_near.max(0.01);
+        let far = z_far.max(near + 1.0);
+        let l = lambda.clamp(0.0, 1.0);
+
+        let mut splits = [0.0f32; 4];
+        for i in 1..=4 {
+            let p = i as f32 / 4.0;
+            let log_split = near * (far / near).powf(p);
+            let lin_split = near + (far - near) * p;
+            splits[i - 1] = l * log_split + (1.0 - l) * lin_split;
+        }
+        splits
+    }
+
+    /// Verilen kamera ve split mesafeleri için 4 kaskadlı ışık uzayı matrislerini (`[Mat4; 4]`) hesaplar
+    pub fn csm_matrices(&self, camera: &Camera3D, splits: [f32; 4]) -> [Mat4; 4] {
+        let mut mats = [Mat4::IDENTITY; 4];
+        let mut prev_near = camera.z_near;
+
+        for (i, &split_far) in splits.iter().enumerate() {
+            // Her kaskadın frustum köşelerini dünya uzayında bul
+            let sub_cam = Camera3D::new(
+                camera.eye,
+                camera.target,
+                camera.up,
+                camera.fov_y_radians,
+                camera.aspect_ratio,
+                prev_near,
+                split_far,
+            );
+
+            // Alt kameranın frustum merkezini ve yarıçapını hesapla
+            let inv_vp = sub_cam.view_projection().inverse();
+            let mut frustum_center = Vec3::ZERO;
+            let mut corners = [Vec3::ZERO; 8];
+            let mut corner_idx = 0;
+
+            for x in [-1.0f32, 1.0] {
+                for y in [-1.0f32, 1.0] {
+                    for z in [0.0f32, 1.0] {
+                        let pt = inv_vp * glam::Vec4::new(x, y, z, 1.0);
+                        let w_pt = pt.truncate() / pt.w;
+                        corners[corner_idx] = w_pt;
+                        frustum_center += w_pt;
+                        corner_idx += 1;
+                    }
+                }
+            }
+            frustum_center /= 8.0;
+
+            let mut radius = 0.0f32;
+            for corner in &corners {
+                radius = radius.max(corner.distance(frustum_center));
+            }
+            // Texel titremesini (shimmering) önlemek için yarıçapı yukarı yuvarla
+            radius = (radius * 16.0).ceil() / 16.0;
+
+            let light_dir = if self.direction.length_squared() < 1e-6 {
+                Vec3::new(0.5, 1.0, 0.7).normalize()
+            } else {
+                self.direction.normalize()
+            };
+            let light_eye = frustum_center + light_dir * (radius * 2.0);
+            let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
+                Vec3::Z
+            } else {
+                Vec3::Y
+            };
+            let light_view = Mat4::look_at_rh(light_eye, frustum_center, up);
+            let light_proj =
+                Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 4.0);
+
+            mats[i] = light_proj * light_view;
+            prev_near = split_far;
+        }
+
+        mats
+    }
 }
 
 /// Ortam Işığı (Ambient Light)
@@ -381,5 +463,23 @@ mod tests {
             arm.current_length > 0.5 && arm.current_length <= 5.0,
             "Engel kalkinca mesafe artmaya baslamali"
         );
+    }
+
+    #[test]
+    fn test_csm_splits_and_matrices() {
+        let splits = DirectionalLight::calculate_csm_splits(0.1, 100.0, 0.75);
+        assert!(splits[0] > 0.1 && splits[0] < splits[1]);
+        assert!(splits[1] < splits[2]);
+        assert!(splits[2] < splits[3]);
+        assert!((splits[3] - 100.0).abs() < 1e-3);
+
+        let sun = DirectionalLight::default();
+        let cam = Camera3D::default();
+        let csm_mats = sun.csm_matrices(&cam, splits);
+        assert_eq!(csm_mats.len(), 4);
+        for (i, m) in csm_mats.iter().enumerate() {
+            println!("Cascade {i} determinant: {}", m.determinant());
+            assert!(m.determinant().is_finite());
+        }
     }
 }
