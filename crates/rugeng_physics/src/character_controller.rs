@@ -293,4 +293,54 @@ mod tests {
             controller.position.z
         );
     }
+
+    #[test]
+    fn test_character_controller_ceiling_hit_cancels_upward_velocity() {
+        let config = CharacterController3DConfig::default();
+        // Karakter tavanın hemen altında başlasın: Tavan min.y = 2.5, half_extents.y = 0.9.
+        // Başlangıç y = 1.55 ise, char.max.y = 2.45.
+        // dt = 1/60s'de vel.y = 10.0 ile +0.166m yükselir -> char.max.y = 2.61 > 2.5 (tavanla çarpışır).
+        let mut controller = CharacterController3D::new(Vec3::new(0.0, 1.55, 0.0), config);
+        let ceiling = AABB3D::new(Vec3::new(-5.0, 2.5, -5.0), Vec3::new(5.0, 3.5, 5.0));
+        let colliders = [ceiling];
+
+        controller.velocity.y = 10.0; // Yukarı doğru fırlat
+        controller.move_and_slide(Vec3::ZERO, 1.0 / 60.0, &colliders);
+
+        // Tavan min.y = 2.5, half_extents.y = 0.9 -> Karakter max y konumu 1.6 olmalı
+        assert!(
+            controller.position.y <= 1.601,
+            "Karakter tavani asmamali, pos.y: {}",
+            controller.position.y
+        );
+        assert_eq!(
+            controller.velocity.y, 0.0,
+            "Tavana carptiginda yukari dogru dikey hiz sifirlanmali"
+        );
+    }
+
+    #[test]
+    fn test_character_controller_ground_snapping_on_step_down() {
+        let config = CharacterController3DConfig {
+            ground_snap_distance: 0.1,
+            ..Default::default()
+        };
+        // Karakter zeminden sadece 0.04m yukarıda havada
+        let mut controller = CharacterController3D::new(Vec3::new(0.0, 0.94, 0.0), config);
+        let ground = AABB3D::new(Vec3::new(-5.0, -1.0, -5.0), Vec3::new(5.0, 0.0, 5.0));
+        let colliders = [ground];
+
+        controller.velocity.y = 0.0;
+        controller.move_and_slide(Vec3::ZERO, 1.0 / 60.0, &colliders);
+
+        assert!(
+            controller.is_on_ground,
+            "Snap toleransi dahilindeki zemin yakalanmali ve zeminde olmali"
+        );
+        assert!(
+            (controller.position.y - 0.9).abs() < 1e-3,
+            "Zemin seviyesine kenetlenmeli (snap), pos.y: {}",
+            controller.position.y
+        );
+    }
 }

@@ -1970,10 +1970,8 @@ mod tests {
             },
         );
 
-        // Snapshot al (Oynatıldığında veya Adım ilerletildiğinde)
-        app.editor
-            .scene_snapshot
-            .push((e, *app.registry.get::<Transform2D>(e).unwrap()));
+        // Simülasyonu başlat (Snapshot otomatik alınır)
+        app.start_simulation();
 
         // 1 kare (1/60 saniye) adım ilerlet
         app.step_simulation_single_frame(1.0 / 60.0);
@@ -1982,12 +1980,7 @@ mod tests {
         assert_eq!(new_pos.x, 11.0, "1 kare sonra x konumu 10.0 -> 11.0 olmalı");
 
         // Stop: Snapshot'a geri dön
-        for &(snap_e, snap_t) in &app.editor.scene_snapshot {
-            if let Some(t) = app.registry.get_mut::<Transform2D>(snap_e) {
-                *t = snap_t;
-            }
-        }
-        app.editor.scene_snapshot.clear();
+        app.stop_simulation();
 
         assert_eq!(
             app.registry.get::<Transform2D>(e).unwrap().pos,
@@ -2011,10 +2004,8 @@ mod tests {
             },
         );
 
-        // 1. Snapshot al (Play veya Step tetiklendiğinde)
-        app.editor
-            .scene_snapshot_3d
-            .push((e3d, *app.registry.get::<Transform3D>(e3d).unwrap()));
+        // 1. Simülasyonu başlat (2D ve 3D snapshot otomatik alınır)
+        app.start_simulation();
 
         // 2. Simülasyon adımı işlet (3D varlık döner ve ötelenir)
         app.step_simulation_single_frame(1.0 / 60.0);
@@ -2029,13 +2020,8 @@ mod tests {
             "Simulasyon sonrasi 3D rotasyon degismeli"
         );
 
-        // 3. Stop: Snapshot'tan 3D durumu geri yükle
-        for &(snap_e, snap_t) in &app.editor.scene_snapshot_3d {
-            if let Some(t) = app.registry.get_mut::<Transform3D>(snap_e) {
-                *t = snap_t;
-            }
-        }
-        app.editor.scene_snapshot_3d.clear();
+        // 3. Stop: app.stop_simulation() ile 3D durumu geri yükle
+        app.stop_simulation();
 
         let restored_tr = *app.registry.get::<Transform3D>(e3d).unwrap();
         assert_eq!(

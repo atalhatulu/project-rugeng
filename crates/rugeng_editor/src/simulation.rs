@@ -228,4 +228,34 @@ impl App {
             tr3d.translation.y += 0.1 * dt;
         }
     }
+
+    /// Simülasyonu başlatır ve mevcut sahne durumunun (2D ve 3D) snapshot'ını alır
+    pub(crate) fn start_simulation(&mut self) {
+        if self.editor.scene_snapshot.is_empty() && self.editor.scene_snapshot_3d.is_empty() {
+            self.registry.view1_ref::<Transform2D, _>(|e, t| {
+                self.editor.scene_snapshot.push((e, *t));
+            });
+            self.registry.view1_ref::<Transform3D, _>(|e, t| {
+                self.editor.scene_snapshot_3d.push((e, *t));
+            });
+        }
+        self.editor.is_playing = true;
+    }
+
+    /// Simülasyonu durdurur ve sahne durumunu (2D ve 3D) snapshot anına geri yükler (rollback)
+    pub(crate) fn stop_simulation(&mut self) {
+        self.editor.is_playing = false;
+        for &(e, t) in &self.editor.scene_snapshot {
+            if let Some(cur_t) = self.registry.get_mut::<Transform2D>(e) {
+                *cur_t = t;
+            }
+        }
+        self.editor.scene_snapshot.clear();
+        for &(e, t) in &self.editor.scene_snapshot_3d {
+            if let Some(cur_t) = self.registry.get_mut::<Transform3D>(e) {
+                *cur_t = t;
+            }
+        }
+        self.editor.scene_snapshot_3d.clear();
+    }
 }
