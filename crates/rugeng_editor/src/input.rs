@@ -356,9 +356,14 @@ impl App {
             // Play (Oynat - ▶)
             if mouse.x >= play_x && mouse.x <= play_x + 26.0 {
                 if !self.editor.is_playing {
-                    if self.editor.scene_snapshot.is_empty() {
+                    if self.editor.scene_snapshot.is_empty()
+                        && self.editor.scene_snapshot_3d.is_empty()
+                    {
                         self.registry.view1_ref::<Transform2D, _>(|e, t| {
                             self.editor.scene_snapshot.push((e, *t));
+                        });
+                        self.registry.view1_ref::<Transform3D, _>(|e, t| {
+                            self.editor.scene_snapshot_3d.push((e, *t));
                         });
                     }
                     self.editor.is_playing = true;
@@ -389,6 +394,12 @@ impl App {
                     }
                 }
                 self.editor.scene_snapshot.clear();
+                for &(e, t) in &self.editor.scene_snapshot_3d {
+                    if let Some(cur_t) = self.registry.get_mut::<Transform3D>(e) {
+                        *cur_t = t;
+                    }
+                }
+                self.editor.scene_snapshot_3d.clear();
                 self.editor.logs.push(LogMessage {
                     level: "INFO",
                     text: "Oyun durduruldu (Sahne ilk haline donduruldu).".to_string(),
@@ -397,9 +408,13 @@ impl App {
             }
             // Step (Adım İlerlet - ⏭)
             if mouse.x >= play_x + 84.0 && mouse.x <= play_x + 110.0 {
-                if self.editor.scene_snapshot.is_empty() {
+                if self.editor.scene_snapshot.is_empty() && self.editor.scene_snapshot_3d.is_empty()
+                {
                     self.registry.view1_ref::<Transform2D, _>(|e, t| {
                         self.editor.scene_snapshot.push((e, *t));
+                    });
+                    self.registry.view1_ref::<Transform3D, _>(|e, t| {
+                        self.editor.scene_snapshot_3d.push((e, *t));
                     });
                 }
                 self.step_simulation_single_frame(1.0 / 60.0);
@@ -410,7 +425,30 @@ impl App {
                 return;
             }
 
-            // Hızlı Butonlar ([KAYDET], [SARSINTI])
+            // Hızlı Butonlar ([PAKETLE], [DISA AKTAR], [KAYDET], [SARSINTI])
+            let pak_btn_x = play_x - 310.0;
+            if mouse.x >= pak_btn_x && mouse.x <= pak_btn_x + 76.0 {
+                let pak_target = "dist/game.pak";
+                if let Err(e) = self.export_project_pak(pak_target) {
+                    self.editor.logs.push(LogMessage {
+                        level: "ERROR",
+                        text: format!("Paketleme basarisiz: {e}"),
+                    });
+                }
+                return;
+            }
+
+            let export_btn_x = play_x - 228.0;
+            if mouse.x >= export_btn_x && mouse.x <= export_btn_x + 74.0 {
+                let pak_target = "dist/game.pak";
+                let _ = self.export_project_pak(pak_target);
+                self.editor.logs.push(LogMessage {
+                    level: "INFO",
+                    text: "Tek tikla disa aktarim tamamlandi (Standalone paket hazir).".to_string(),
+                });
+                return;
+            }
+
             let save_btn_x = play_x - 148.0;
             if mouse.x >= save_btn_x && mouse.x <= save_btn_x + 68.0 {
                 let path = self.editor.current_scene_path.clone();

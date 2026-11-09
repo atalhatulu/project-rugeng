@@ -62,6 +62,7 @@ pub(crate) struct EditorState {
     pub(crate) files_in_dir: Vec<FileItem>,
     pub(crate) selected_file: String,
     pub(crate) scene_snapshot: Vec<(Entity, Transform2D)>,
+    pub(crate) scene_snapshot_3d: Vec<(Entity, Transform3D)>,
     pub(crate) current_scene_path: String,
     pub(crate) is_scene_dirty: bool,
     pub(crate) scene_counter: u32,
@@ -237,6 +238,7 @@ impl App {
             files_in_dir: Vec::new(),
             selected_file: "fish_eye.gdshader".to_string(),
             scene_snapshot: Vec::new(),
+            scene_snapshot_3d: Vec::new(),
             current_scene_path: "scenes/main.scene".to_string(),
             is_scene_dirty: false,
             scene_counter: 1,
@@ -1992,6 +1994,109 @@ mod tests {
             initial_pos,
             "Stop sonrası nesne ilk konumuna dönmeli"
         );
+    }
+
+    #[test]
+    fn test_editor_simulation_3d_state_rollback() {
+        let mut app = App::new();
+        let e3d = app.registry.create();
+        let initial_trans = glam::Vec3::new(3.0, 5.0, -2.0);
+        let initial_rot = glam::Quat::IDENTITY;
+        app.registry.emplace(
+            e3d,
+            Transform3D {
+                translation: initial_trans,
+                rotation: initial_rot,
+                scale: glam::Vec3::ONE,
+            },
+        );
+
+        // 1. Snapshot al (Play veya Step tetiklendiğinde)
+        app.editor
+            .scene_snapshot_3d
+            .push((e3d, *app.registry.get::<Transform3D>(e3d).unwrap()));
+
+        // 2. Simülasyon adımı işlet (3D varlık döner ve ötelenir)
+        app.step_simulation_single_frame(1.0 / 60.0);
+
+        let simulated_tr = *app.registry.get::<Transform3D>(e3d).unwrap();
+        assert_ne!(
+            simulated_tr.translation, initial_trans,
+            "Simulasyon sonrasi 3D oteleme degismeli"
+        );
+        assert_ne!(
+            simulated_tr.rotation, initial_rot,
+            "Simulasyon sonrasi 3D rotasyon degismeli"
+        );
+
+        // 3. Stop: Snapshot'tan 3D durumu geri yükle
+        for &(snap_e, snap_t) in &app.editor.scene_snapshot_3d {
+            if let Some(t) = app.registry.get_mut::<Transform3D>(snap_e) {
+                *t = snap_t;
+            }
+        }
+        app.editor.scene_snapshot_3d.clear();
+
+        let restored_tr = *app.registry.get::<Transform3D>(e3d).unwrap();
+        assert_eq!(
+            restored_tr.translation, initial_trans,
+            "Stop sonrasi 3D nesne ilk konumuna geri donmeli"
+        );
+        assert_eq!(
+            restored_tr.rotation, initial_rot,
+            "Stop sonrasi 3D nesne ilk rotasyonuna geri donmeli"
+        );
+    }
+
+    #[test]
+    fn test_editor_export_pak_generation() {
+        let mut app = App::new();
+        let initial_count = app.registry.entities::<Transform2D>().len()
+            + app.registry.entities::<Transform3D>().len();
+
+        let e = app.registry.create();
+        app.registry.emplace(
+            e,
+            Transform3D {
+                translation: glam::Vec3::new(1.0, 2.0, 3.0),
+                rotation: glam::Quat::IDENTITY,
+                scale: glam::Vec3::ONE,
+            },
+        );
+        app.registry.emplace(
+            e,
+            rugeng_core::Mesh3DComponent::with_pbr("cube", [1.0, 1.0, 1.0, 1.0], 0.5, 0.1),
+        );
+
+        let temp_pak = "/tmp/test_export_stage18.pak";
+        let res = app.export_project_pak(temp_pak);
+        assert!(res.is_ok(), "PAK export basarili olmali: {:?}", res);
+
+        // PAK dosyasını PakReader ile oku ve doğrula
+        let reader =
+            rugeng_assets::PakReader::from_file(temp_pak).expect("PAK dosyasi okunabilmeli");
+        let scene_bin = reader
+            .get_file("scenes/main.bin")
+            .expect("scenes/main.bin pakette bulunmali");
+        assert!(!scene_bin.is_empty(), "Sahne binary verisi bos olmamali");
+
+        let vs = rugeng_assets::VersionedScene::from_bytes(scene_bin)
+            .expect("Binary sahne ayristirilabilmeli");
+        assert_eq!(
+            vs.entities.len(),
+            initial_count + 1,
+            "Var olan ve yeni eklenen 3D varliklar paketlenmis olmali"
+        );
+
+        // Eklenen varlığın transform3d özelliklerini doğrula
+        let found = vs.entities.iter().find(|item| {
+            item.transform_3d
+                .map(|t| t.translation.x == 1.0 && t.translation.y == 2.0)
+                .unwrap_or(false)
+        });
+        assert!(found.is_some(), "Eklenen 3D varlik pakette bulunmali");
+
+        let _ = std::fs::remove_file(temp_pak);
     }
 
     #[test]

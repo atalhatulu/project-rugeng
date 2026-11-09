@@ -4,7 +4,7 @@ use glam::Vec2;
 use rugeng_core::{
     compute_world_transform, Animation2DComponent, Collider2D, Entity, Parent,
     ParticleEmitterComponent, ScriptComponent, SpriteTexture, Tilemap2DComponent, Transform2D,
-    Velocity2D,
+    Transform3D, Velocity2D,
 };
 use rugeng_physics::resolve_aabb_collision;
 impl App {
@@ -215,6 +215,17 @@ impl App {
                     }
                 }
             }
+        }
+
+        // 9. 3D Simülasyon Adımı (3D Varlıkların Transform Hareketi)
+        let pool_tr3d = unsafe { self.registry.storage_mut::<Transform3D>() };
+        let (entities_3d, trs_3d) = pool_tr3d.split_entities_and_components_mut();
+        for (idx, _e) in entities_3d.iter().enumerate() {
+            let tr3d = &mut trs_3d[idx];
+            // Simülasyonda 3D varlıkların yerel hareketi / rotasyonu (örnek demo dönüşü)
+            let delta_rot = glam::Quat::from_rotation_y(0.5 * dt);
+            tr3d.rotation = (tr3d.rotation * delta_rot).normalize();
+            tr3d.translation.y += 0.1 * dt;
         }
     }
 }

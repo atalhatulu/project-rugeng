@@ -147,6 +147,137 @@ impl App {
         }
     }
 
+    /// Mevcut sahneyi ve varlıkları .pak arşivi olarak paketler
+    pub(crate) fn export_project_pak(&mut self, pak_path: &str) -> Result<(), String> {
+        let mut scene = SceneData::new("MainWorkbenchScene");
+        let mut visited = std::collections::HashSet::new();
+
+        // 2D Varlıklar
+        for e in self.registry.entities::<Transform2D>() {
+            visited.insert(e);
+            let tr = self.registry.get::<Transform2D>(e).unwrap();
+            let color = self
+                .registry
+                .get::<SpriteColor>(e)
+                .map(|s| s.color)
+                .unwrap_or([255, 255, 255, 255]);
+            let texture = self
+                .registry
+                .get::<SpriteTexture>(e)
+                .map(|t| t.name.clone());
+            let col = self.registry.get::<Collider2D>(e);
+            let has_collider = col.is_some();
+            let is_dynamic = col.map(|c| c.is_dynamic).unwrap_or(true);
+            let is_sensor = col.map(|c| c.is_sensor).unwrap_or(false);
+            let velocity = self
+                .registry
+                .get::<Velocity2D>(e)
+                .map(|v| [v.vel.x, v.vel.y]);
+            let script = self
+                .registry
+                .get::<ScriptComponent>(e)
+                .map(|s| s.name.clone());
+            let parent_id = self.registry.get::<Parent>(e).map(|p| p.entity.index());
+            let text = self.registry.get::<Text2DComponent>(e).cloned();
+            let animation = self.registry.get::<Animation2DComponent>(e).cloned();
+            let tilemap = self.registry.get::<Tilemap2DComponent>(e).cloned();
+            let transform_3d = self.registry.get::<Transform3D>(e).copied();
+            let mesh_3d = self.registry.get::<Mesh3DComponent>(e).cloned();
+            let z_index = self.registry.get::<ZIndex2D>(e).map(|z| z.z).unwrap_or(0);
+            let particle = self.registry.get::<ParticleEmitterComponent>(e).map(|p| {
+                let mut cfg = p.clone();
+                cfg.particles.clear();
+                cfg.emission_timer = 0.0;
+                cfg
+            });
+
+            scene.entities.push(SceneEntity {
+                id: e.index(),
+                name: self.display_name_of(e, false),
+                pos: [tr.pos.x, tr.pos.y],
+                size: [tr.size.x, tr.size.y],
+                rotation: tr.rotation,
+                color,
+                texture,
+                has_collider,
+                is_dynamic,
+                is_sensor,
+                velocity,
+                script,
+                parent_id,
+                text,
+                animation,
+                tilemap,
+                transform_3d,
+                mesh_3d,
+                z_index,
+                particle,
+            });
+        }
+
+        // 3D Varlıklar
+        for e in self.registry.entities::<Transform3D>() {
+            if visited.contains(&e) {
+                continue;
+            }
+            let t3 = self.registry.get::<Transform3D>(e).copied();
+            let m3 = self.registry.get::<Mesh3DComponent>(e).cloned();
+            let parent_id = self.registry.get::<Parent>(e).map(|p| p.entity.index());
+            let script = self
+                .registry
+                .get::<ScriptComponent>(e)
+                .map(|s| s.name.clone());
+
+            scene.entities.push(SceneEntity {
+                id: e.index(),
+                name: self.display_name_of(e, true),
+                pos: [0.0, 0.0],
+                size: [1.0, 1.0],
+                rotation: 0.0,
+                color: [255, 255, 255, 255],
+                texture: None,
+                has_collider: false,
+                is_dynamic: false,
+                is_sensor: false,
+                velocity: None,
+                script,
+                parent_id,
+                text: None,
+                animation: None,
+                tilemap: None,
+                transform_3d: t3,
+                mesh_3d: m3,
+                z_index: 0,
+                particle: None,
+            });
+        }
+
+        let versioned = VersionedScene::from_core_scene(&scene);
+        let scene_binary = versioned.to_binary()?;
+
+        let mut pak_writer = rugeng_assets::PakWriter::new();
+        pak_writer.add_file("scenes/main.bin", scene_binary);
+
+        // Varsa ek varlık dosyalarını pakete ekle (örneğin atlas veya ses)
+        if let Ok(atlas_bytes) = std::fs::read("assets/textures/atlas.png") {
+            pak_writer.add_file("textures/atlas.png", atlas_bytes);
+        }
+
+        // Hedef dizini oluştur
+        if let Some(parent) = std::path::Path::new(pak_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        pak_writer.write_to_file(pak_path)?;
+
+        self.editor.logs.push(LogMessage {
+            level: "INFO",
+            text: format!("Proje paketi olusturuldu -> '{}'", pak_path),
+        });
+        self.audio.play("sfx_powerup");
+        Ok(())
+    }
+
     pub(crate) fn load_scene_from_file(&mut self, path: &str) {
         let load_res = std::fs::read_to_string(path)
             .map_err(|e| format!("Dosya okunamadi: {e}"))

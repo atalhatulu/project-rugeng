@@ -169,7 +169,75 @@ impl App {
         // Sağ: Hızlı Aksiyon Butonları ([KAYDET], [SARSINTI]) ve Oynatma Butonları ([▶], [❚❚], [■], [⏭])
         let play_x = screen_w - 140.0;
         let is_playing = self.editor.is_playing;
-        let has_snapshot = !self.editor.scene_snapshot.is_empty();
+        let has_snapshot =
+            !self.editor.scene_snapshot.is_empty() || !self.editor.scene_snapshot_3d.is_empty();
+
+        // Hızlı Butonlar: [PAK], [DIŞA AKTAR], [KAYDET], [SARSINTI]
+        let pak_btn_x = play_x - 310.0;
+        instances.push(QuadInstance::new(
+            [pak_btn_x, 4.0],
+            [76.0, 22.0],
+            [35, 45, 60, 255],
+            0,
+        ));
+        instances.push(QuadInstance::new(
+            [pak_btn_x, 4.0],
+            [76.0, 1.0],
+            theme.accent,
+            0,
+        ));
+        if let Some(ttf) = self.ttf_font.as_ref() {
+            ttf.draw_text(
+                instances,
+                "PAKETLE",
+                pak_btn_x + 8.0,
+                7.5,
+                12.0,
+                theme.text_primary,
+            );
+        } else {
+            font::draw_text(
+                instances,
+                "PAKETLE",
+                pak_btn_x + 9.0,
+                8.0,
+                1.2,
+                theme.text_primary,
+            );
+        }
+
+        let export_btn_x = play_x - 228.0;
+        instances.push(QuadInstance::new(
+            [export_btn_x, 4.0],
+            [74.0, 22.0],
+            [48, 40, 60, 255],
+            0,
+        ));
+        instances.push(QuadInstance::new(
+            [export_btn_x, 4.0],
+            [74.0, 1.0],
+            [168, 85, 247, 255], // mor / accent alt
+            0,
+        ));
+        if let Some(ttf) = self.ttf_font.as_ref() {
+            ttf.draw_text(
+                instances,
+                "DISA AKTAR",
+                export_btn_x + 6.0,
+                7.5,
+                11.0,
+                theme.text_primary,
+            );
+        } else {
+            font::draw_text(
+                instances,
+                "DISA AKTAR",
+                export_btn_x + 7.0,
+                8.0,
+                1.1,
+                theme.text_primary,
+            );
+        }
 
         // [KAYDET] Hızlı Buton
         let save_btn_x = play_x - 148.0;
