@@ -486,7 +486,52 @@ impl App {
                     1.05,
                     [150, 210, 255, 255],
                 );
-                cur_insp_y += col3d_h + 8.0;
+                // BİLEŞEN: [ 3D İskelet Animasyonu ]
+                let anim_h = 70.0;
+                let anim_y = cur_insp_y;
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, anim_y],
+                    [right_w - 16.0, anim_h],
+                    theme.card_bg,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, anim_y],
+                    [right_w - 16.0, 20.0],
+                    theme.card_header,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, anim_y],
+                    [right_w - 16.0, 1.0],
+                    theme.border_subtle,
+                    0,
+                ));
+                font::draw_text(
+                    instances,
+                    "v Skeletal Animation (Skinning)",
+                    insp_x + 14.0,
+                    anim_y + 4.0,
+                    1.25,
+                    [255, 140, 200, 255],
+                );
+                font::draw_text(
+                    instances,
+                    "Bone Palette: 32 Joints | Vertex Skinning: CPU/GPU",
+                    insp_x + 14.0,
+                    anim_y + 26.0,
+                    1.05,
+                    text_norm,
+                );
+                font::draw_text(
+                    instances,
+                    "glTF Animation: TRS Channels | State: Playing (1.0x)",
+                    insp_x + 14.0,
+                    anim_y + 46.0,
+                    1.05,
+                    godot_blue,
+                );
+                cur_insp_y += anim_h + 8.0;
             }
 
             // BİLEŞEN 1: [ Transform 2D ]

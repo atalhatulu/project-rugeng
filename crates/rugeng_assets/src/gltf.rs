@@ -6,13 +6,15 @@
 
 use std::path::Path;
 
-/// glTF Köşe Verisi
+/// glTF Köşe Verisi (Pozisyon, Normal, UV, Renk ve İskelet Ciltleme İndeks/Ağırlıkları)
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GltfVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
     pub color: [f32; 4],
+    pub joints: [u16; 4],
+    pub weights: [f32; 4],
 }
 
 impl Default for GltfVertex {
@@ -22,6 +24,8 @@ impl Default for GltfVertex {
             normal: [0.0, 1.0, 0.0],
             uv: [0.0; 2],
             color: [1.0, 1.0, 1.0, 1.0],
+            joints: [0; 4],
+            weights: [1.0, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -75,6 +79,8 @@ pub struct GltfModel {
     pub submeshes: Vec<GltfSubmesh>,
     pub materials: Vec<GltfMaterial>,
     pub textures: Vec<GltfTexture>,
+    pub skeleton: Option<rugeng_core::animation_3d::Skeleton>,
+    pub animations: Vec<rugeng_core::animation_3d::AnimationClip3D>,
 }
 
 impl GltfModel {
@@ -108,6 +114,8 @@ impl GltfModel {
             submeshes: Vec::new(),
             materials: Vec::new(),
             textures: Vec::new(),
+            skeleton: None,
+            animations: Vec::new(),
         };
 
         // 1. Dokuları çıkar
@@ -185,6 +193,16 @@ impl GltfModel {
                     .map(|iter| iter.into_rgba_f32().collect())
                     .unwrap_or_else(|| vec![[1.0, 1.0, 1.0, 1.0]; positions.len()]);
 
+                let joints: Vec<[u16; 4]> = reader
+                    .read_joints(0)
+                    .map(|iter| iter.into_u16().collect())
+                    .unwrap_or_else(|| vec![[0; 4]; positions.len()]);
+
+                let weights: Vec<[f32; 4]> = reader
+                    .read_weights(0)
+                    .map(|iter| iter.into_f32().collect())
+                    .unwrap_or_else(|| vec![[1.0, 0.0, 0.0, 0.0]; positions.len()]);
+
                 let mut vertices = Vec::with_capacity(positions.len());
                 for (i, &pos) in positions.iter().enumerate() {
                     vertices.push(GltfVertex {
@@ -192,6 +210,8 @@ impl GltfModel {
                         normal: normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
                         uv: uvs.get(i).copied().unwrap_or([0.0, 0.0]),
                         color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                        joints: joints.get(i).copied().unwrap_or([0; 4]),
+                        weights: weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
                     });
                 }
 
@@ -209,6 +229,154 @@ impl GltfModel {
                     material_index: primitive.material().index(),
                 });
             }
+        }
+
+        // 4. İskelet (Skin / Joints) Ayrıştırma
+        if let Some(skin) = document.skins().next() {
+            let reader = skin.reader(|buffer| Some(&buffers[buffer.index()]));
+            let inverse_bind_matrices: Vec<glam::Mat4> = reader
+                .read_inverse_bind_matrices()
+                .map(|iter| {
+                    iter.map(|cols| glam::Mat4::from_cols_array_2d(&cols))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let mut joints = Vec::new();
+            let joint_nodes: Vec<gltf::Node> = skin.joints().collect();
+
+            for (idx, joint_node) in joint_nodes.iter().enumerate() {
+                let name = joint_node.name().unwrap_or("Joint").to_string();
+                let (trans, rot, scale) = joint_node.transform().decomposed();
+
+                // Ebeveyn düğümün skin.joints() içindeki indeksini tespit et
+                let mut parent_idx = None;
+                for (p_idx, candidate) in joint_nodes.iter().enumerate() {
+                    if candidate
+                        .children()
+                        .any(|c| c.index() == joint_node.index())
+                    {
+                        parent_idx = Some(p_idx);
+                        break;
+                    }
+                }
+
+                let inv_bind = inverse_bind_matrices
+                    .get(idx)
+                    .copied()
+                    .unwrap_or(glam::Mat4::IDENTITY);
+
+                let mut joint = rugeng_core::animation_3d::Joint::new(name, parent_idx, inv_bind);
+                joint.local_translation = glam::Vec3::from(trans);
+                joint.local_rotation = glam::Quat::from_xyzw(rot[0], rot[1], rot[2], rot[3]);
+                joint.local_scale = glam::Vec3::from(scale);
+                joints.push(joint);
+            }
+
+            if !joints.is_empty() {
+                model.skeleton = Some(rugeng_core::animation_3d::Skeleton::new(joints));
+            }
+        }
+
+        // 5. Animasyon Klipleri Ayrıştırma
+        for anim in document.animations() {
+            let anim_name = anim.name().unwrap_or("Animation").to_string();
+            let mut channels = Vec::new();
+            let mut max_duration: f32 = 0.0;
+
+            for channel in anim.channels() {
+                let target_node = channel.target().node();
+                let target_property = match channel.target().property() {
+                    gltf::animation::Property::Translation => {
+                        rugeng_core::animation_3d::AnimationProperty::Translation
+                    }
+                    gltf::animation::Property::Rotation => {
+                        rugeng_core::animation_3d::AnimationProperty::Rotation
+                    }
+                    gltf::animation::Property::Scale => {
+                        rugeng_core::animation_3d::AnimationProperty::Scale
+                    }
+                    _ => continue,
+                };
+
+                let sampler = channel.sampler();
+                let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+
+                let timestamps: Vec<f32> = reader
+                    .read_inputs()
+                    .map(|iter| iter.collect())
+                    .unwrap_or_default();
+                if let Some(&last_t) = timestamps.last() {
+                    if last_t > max_duration {
+                        max_duration = last_t;
+                    }
+                }
+
+                let interpolation = match sampler.interpolation() {
+                    gltf::animation::Interpolation::Step => {
+                        rugeng_core::animation_3d::Interpolation::Step
+                    }
+                    _ => rugeng_core::animation_3d::Interpolation::Linear,
+                };
+
+                // Node indeksini joint indeksine eşle
+                let joint_index = if let Some(skin) = document.skins().next() {
+                    skin.joints()
+                        .position(|j| j.index() == target_node.index())
+                        .unwrap_or(target_node.index())
+                } else {
+                    target_node.index()
+                };
+
+                let mut vec3_values = Vec::new();
+                let mut quat_values = Vec::new();
+
+                match target_property {
+                    rugeng_core::animation_3d::AnimationProperty::Translation
+                    | rugeng_core::animation_3d::AnimationProperty::Scale => {
+                        if let Some(outputs) = reader.read_outputs() {
+                            match outputs {
+                                gltf::animation::util::ReadOutputs::Translations(iter) => {
+                                    vec3_values = iter.map(glam::Vec3::from).collect();
+                                }
+                                gltf::animation::util::ReadOutputs::Scales(iter) => {
+                                    vec3_values = iter.map(glam::Vec3::from).collect();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    rugeng_core::animation_3d::AnimationProperty::Rotation => {
+                        if let Some(gltf::animation::util::ReadOutputs::Rotations(iter)) =
+                            reader.read_outputs()
+                        {
+                            quat_values = iter
+                                .into_f32()
+                                .map(|r| glam::Quat::from_xyzw(r[0], r[1], r[2], r[3]))
+                                .collect();
+                        }
+                    }
+                }
+
+                if !timestamps.is_empty() {
+                    channels.push(rugeng_core::animation_3d::AnimationChannel3D {
+                        joint_index,
+                        property: target_property,
+                        timestamps,
+                        vec3_values,
+                        quat_values,
+                        interpolation,
+                    });
+                }
+            }
+
+            model
+                .animations
+                .push(rugeng_core::animation_3d::AnimationClip3D::new(
+                    anim_name,
+                    max_duration,
+                    channels,
+                ));
         }
 
         Ok(model)
@@ -287,5 +455,21 @@ mod tests {
         assert_eq!(mat.base_color_factor, [0.2, 0.8, 0.4, 1.0]);
         assert!((mat.roughness_factor - 0.3).abs() < 1e-4);
         assert!((mat.metallic_factor - 0.7).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_gltf_animation_and_skin_parsing() {
+        let sample_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/models/sample.glb"
+        );
+        let model = GltfModel::from_file(sample_path).expect("sample.glb ayrıştırılabilmeli");
+        // sample.glb tek bir statik üçgendir, skin/animation opsiyoneldir ve boş/None olmalıdır
+        assert!(model.skeleton.is_none());
+        assert!(model.animations.is_empty());
+        // Köşe verilerinde varsayılan joint ve weight yapısı doğrulanmalıdır
+        let sub = &model.submeshes[0];
+        assert_eq!(sub.vertices[0].joints, [0, 0, 0, 0]);
+        assert_eq!(sub.vertices[0].weights, [1.0, 0.0, 0.0, 0.0]);
     }
 }

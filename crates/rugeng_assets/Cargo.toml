@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rugeng_core = { path = "../rugeng_core" }
+glam = { workspace = true }
 libc = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }

@@ -1676,6 +1676,12 @@ impl App {
             );
             self.registry.emplace(e, NodeName::new(mesh_name));
 
+            if let Some(ref skel) = model.skeleton {
+                let anim_comp =
+                    rugeng_core::Animation3DComponent::new(skel.clone(), model.animations.clone());
+                self.registry.emplace(e, anim_comp);
+            }
+
             created_entities.push(e);
         }
 

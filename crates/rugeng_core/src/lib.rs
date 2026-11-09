@@ -3,6 +3,7 @@
 //! Lock-Free Frame Arena, Flat & Paged Sparse-Set ECS ve AccessSet Scheduler modeli.
 
 pub mod animation;
+pub mod animation_3d;
 pub mod arena;
 pub mod audio;
 pub mod command_buffer;
@@ -20,6 +21,10 @@ pub mod transform_3d;
 pub mod types;
 
 pub use animation::{Animation2DComponent, AnimationClip, AnimationStateMachine, StateTransition};
+pub use animation_3d::{
+    Animation3DComponent, AnimationChannel3D, AnimationClip3D, AnimationProperty, Interpolation,
+    Joint, Skeleton, MAX_JOINTS,
+};
 pub use arena::{FrameArena, ScopedScratch, DEFAULT_ARENA_CAPACITY};
 pub use audio::{
     AudioBus, AudioEngine, AudioMixer, AudioRingBuffer, AudioStreamDriver, AudioVoice, SfxPreset,

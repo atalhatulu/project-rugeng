@@ -58,6 +58,7 @@ struct App {
     gpu_gltf: Option<GpuMesh3D>,
 
     objects: Vec<DemoObject>,
+    animation_component: Option<rugeng_core::Animation3DComponent>,
     camera: Camera3D,
     camera_yaw: f32,
     camera_pitch: f32,
@@ -216,6 +217,29 @@ impl App {
             gpu_plane: None,
             gpu_gltf: None,
             objects,
+            animation_component: {
+                let bone_root = rugeng_core::Joint::new("RootBone", None, glam::Mat4::IDENTITY);
+                let bone_arm = rugeng_core::Joint::new(
+                    "ArmBone",
+                    Some(0),
+                    glam::Mat4::from_translation(glam::Vec3::new(0.0, -1.0, 0.0)),
+                );
+                let skel = rugeng_core::Skeleton::new(vec![bone_root, bone_arm]);
+                let channel = rugeng_core::AnimationChannel3D {
+                    joint_index: 1,
+                    property: rugeng_core::AnimationProperty::Rotation,
+                    timestamps: vec![0.0, 1.0, 2.0],
+                    vec3_values: Vec::new(),
+                    quat_values: vec![
+                        glam::Quat::IDENTITY,
+                        glam::Quat::from_rotation_z(0.5),
+                        glam::Quat::IDENTITY,
+                    ],
+                    interpolation: rugeng_core::Interpolation::Linear,
+                };
+                let clip = rugeng_core::AnimationClip3D::new("IdleSway", 2.0, vec![channel]);
+                Some(rugeng_core::Animation3DComponent::new(skel, vec![clip]))
+            },
             camera: Camera3D::new(
                 Vec3::new(0.0, 3.5, 9.0),
                 Vec3::new(0.0, 1.0, 0.0),
@@ -327,6 +351,11 @@ impl App {
                 // Penetrasyon varsa küpü yukarı it (MTV)
                 self.objects[1].transform.translation -= manifold.normal * manifold.penetration;
             }
+        }
+
+        // 4. İskelet Animasyonu Güncellemesi (Stage 13 Dogfooding)
+        if let Some(ref mut anim) = self.animation_component {
+            anim.update(dt);
         }
     }
 
