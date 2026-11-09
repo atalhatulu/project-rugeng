@@ -311,6 +311,23 @@ impl App {
                 obj.transform.rotation = (obj.transform.rotation * delta_rot).normalize();
             }
         }
+
+        // 3. 3D Çarpışma Çözücüsü (Stage 12 Dogfooding)
+        // Dinamik küp (indeks 1) ile zemin AABB'si arasındaki penetrasyon testi
+        if self.objects.len() >= 2 {
+            let floor_aabb = self.objects[0]
+                .aabb
+                .transform(self.objects[0].transform.local_matrix());
+            let cube_aabb = self.objects[1]
+                .aabb
+                .transform(self.objects[1].transform.local_matrix());
+            if let Some(manifold) =
+                rugeng_physics::resolve_aabb3d_collision(&cube_aabb, &floor_aabb)
+            {
+                // Penetrasyon varsa küpü yukarı it (MTV)
+                self.objects[1].transform.translation -= manifold.normal * manifold.penetration;
+            }
+        }
     }
 
     fn render(&mut self) {

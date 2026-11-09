@@ -521,6 +521,7 @@ dependencies = [
  "glam",
  "rugeng_assets",
  "rugeng_core",
+ "rugeng_physics",
  "rugeng_render",
  "winit",
 ]

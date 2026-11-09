@@ -11,3 +11,4 @@ glam = { workspace = true }
 bytemuck = { version = "1.25", features = ["derive"] }
 ash = "0.38"
 rugeng_assets = { version = "0.1.0", path = "../../crates/rugeng_assets" }
+rugeng_physics = { version = "0.1.0", path = "../../crates/rugeng_physics" }

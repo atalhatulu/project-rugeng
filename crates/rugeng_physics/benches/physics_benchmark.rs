@@ -99,5 +99,50 @@ fn bench_aabb_resolution(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_spatial_hash_vs_naive, bench_aabb_resolution);
+fn bench_spatial_hash_3d_10k(c: &mut Criterion) {
+    use glam::Vec3;
+    use rugeng_physics::SpatialHashGrid3D;
+
+    let mut group = c.benchmark_group("3D Broadphase (10,000 Entities)");
+    let n = 10_000;
+
+    // 10.000 adet 3D nesne üret (100x100x100 hacminde)
+    let mut positions = Vec::with_capacity(n);
+    let mut lcg = 0x9e3779b97f4a7c15u64;
+    for _ in 0..n {
+        lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let x = ((lcg >> 32) as f32 % 1000.0) * 0.1;
+        lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let y = ((lcg >> 32) as f32 % 1000.0) * 0.1;
+        lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let z = ((lcg >> 32) as f32 % 1000.0) * 0.1;
+        positions.push(Vec3::new(x, y, z));
+    }
+
+    group.bench_function("SpatialHashGrid3D (Insert 10k + 100 Queries)", |b| {
+        let mut grid = SpatialHashGrid3D::new(4.0, 4096, n * 2);
+        let mut out_ids = Vec::with_capacity(128);
+        b.iter(|| {
+            grid.clear();
+            for (id, pos) in positions.iter().enumerate() {
+                grid.insert(id as u32, *pos, 0.5);
+            }
+            let mut total_hits = 0usize;
+            for pos in positions.iter().take(100) {
+                grid.query_sphere(*pos, 2.0, &mut out_ids);
+                total_hits += out_ids.len();
+            }
+            black_box(total_hits);
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_spatial_hash_vs_naive,
+    bench_aabb_resolution,
+    bench_spatial_hash_3d_10k
+);
 criterion_main!(benches);

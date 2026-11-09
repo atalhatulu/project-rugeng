@@ -440,6 +440,53 @@ impl App {
                     godot_blue,
                 );
                 cur_insp_y += sl_h + 8.0;
+
+                // BİLEŞEN: [ 3D Collider & Ray Picking ]
+                let col3d_h = 70.0;
+                let col3d_y = cur_insp_y;
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, col3d_y],
+                    [right_w - 16.0, col3d_h],
+                    theme.card_bg,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, col3d_y],
+                    [right_w - 16.0, 20.0],
+                    theme.card_header,
+                    0,
+                ));
+                instances.push(QuadInstance::new(
+                    [insp_x + 8.0, col3d_y],
+                    [right_w - 16.0, 1.0],
+                    theme.border_subtle,
+                    0,
+                ));
+                font::draw_text(
+                    instances,
+                    "v 3D Collider & Ray Picking",
+                    insp_x + 14.0,
+                    col3d_y + 4.0,
+                    1.25,
+                    godot_green,
+                );
+                font::draw_text(
+                    instances,
+                    "Broadphase: SpatialHashGrid3D | Raycast: Slab/Analytic",
+                    insp_x + 14.0,
+                    col3d_y + 26.0,
+                    1.05,
+                    text_norm,
+                );
+                font::draw_text(
+                    instances,
+                    "Collider Visualizer: ON | Solver: MTV Deterministic",
+                    insp_x + 14.0,
+                    col3d_y + 46.0,
+                    1.05,
+                    [150, 210, 255, 255],
+                );
+                cur_insp_y += col3d_h + 8.0;
             }
 
             // BİLEŞEN 1: [ Transform 2D ]

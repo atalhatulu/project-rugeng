@@ -605,4 +605,20 @@ mod tests {
         let miss_ray = Ray3D::new(Vec3::new(3.0, 10.0, 0.0), Vec3::new(0.0, -1.0, 0.0), 20.0);
         assert!(ray_intersect_sphere(&miss_ray, &sphere).is_none());
     }
+
+    #[test]
+    fn test_ray_pick_nearest_object() {
+        // İki nesne: biri yakın z = 2.0, diğeri uzak z = 6.0
+        let near_box = AABB3D::from_center_half_extents(Vec3::new(0.0, 0.0, 2.0), Vec3::splat(0.5));
+        let far_box = AABB3D::from_center_half_extents(Vec3::new(0.0, 0.0, 6.0), Vec3::splat(0.5));
+
+        let ray = Ray3D::new(Vec3::new(0.0, 0.0, -5.0), Vec3::new(0.0, 0.0, 1.0), 50.0);
+
+        let hit_near = ray_intersect_aabb_3d(&ray, &near_box).expect("Yakin kutu vurulmali");
+        let hit_far = ray_intersect_aabb_3d(&ray, &far_box).expect("Uzak kutu vurulmali");
+
+        assert!(hit_near.dist < hit_far.dist);
+        assert!((hit_near.dist - 6.5).abs() < 1e-4);
+        assert!((hit_far.dist - 10.5).abs() < 1e-4);
+    }
 }
