@@ -8,6 +8,24 @@ pub mod viewport;
 pub mod vulkan_render;
 
 pub use dock_layout::DockLayout;
+use glam::Vec2;
+
+/// Editör panellerinin fare girdilerini modüler şekilde ele almasını sağlayan arayüz
+pub(crate) trait Panel {
+    fn handle_click(
+        &mut self,
+        app: &mut App,
+        mouse: Vec2,
+        layout: &DockLayout,
+        double_click: bool,
+    ) -> bool;
+}
+
+pub(crate) struct TopBarPanel;
+pub(crate) struct SceneTreePanel;
+pub(crate) struct ViewportPanel;
+pub(crate) struct BottomShelfPanel;
+pub(crate) struct InspectorPanel;
 
 use crate::App;
 use rugeng_render::pipeline_2d::QuadInstance;

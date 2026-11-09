@@ -1297,3 +1297,696 @@ impl App {
         }
     }
 }
+
+impl crate::ui::Panel for crate::ui::ViewportPanel {
+    fn handle_click(
+        &mut self,
+        app: &mut App,
+        mouse: Vec2,
+        layout: &DockLayout,
+        _double_click: bool,
+    ) -> bool {
+        let screen_h = layout.screen_h;
+        let menu_h = layout.menu_h;
+        let bottom_h = layout.bottom_h;
+        let vp_x = layout.vp_x;
+        let vp_w = layout.vp_w;
+        let scene_tab_h = layout.scene_tab_h;
+        let vp_canvas_y = layout.vp_canvas_y;
+        let vp_canvas_h = layout.vp_canvas_h;
+
+        // 4. ORTA ALAN: VIEWPORT (SAHNE SEKMLERI, ARACLAR, ZOOM)
+        if mouse.x >= vp_x
+            && mouse.x <= vp_x + vp_w
+            && mouse.y > menu_h
+            && mouse.y < screen_h - bottom_h
+        {
+            // A. Sahne Sekmeleri ve Yeni Sahne Acilir Menusu
+            if app.editor.show_new_scene_dialog {
+                let mut p_x = vp_x + 8.0;
+                for tab in &app.editor.open_scenes {
+                    let display_title =
+                        format!("{}{}", tab.name, if tab.is_dirty { " (*)" } else { "" });
+                    let tab_w = ((display_title.len() as f32) * 7.5 + 46.0).max(90.0);
+                    p_x += tab_w + 4.0;
+                }
+                let dlg_w = 190.0;
+                let dlg_h = 76.0;
+                let dlg_x = p_x;
+                let dlg_y = menu_h + scene_tab_h + 2.0;
+
+                // Secenek 1: [Bos 2D Sahne]
+                let opt1_y = dlg_y + 8.0;
+                if mouse.x >= dlg_x + 6.0
+                    && mouse.x <= dlg_x + dlg_w - 6.0
+                    && mouse.y >= opt1_y
+                    && mouse.y <= opt1_y + 26.0
+                {
+                    app.create_empty_2d_scene();
+                    app.editor.show_new_scene_dialog = false;
+                    return true;
+                }
+
+                // Secenek 2: [Bos 3D Sahne]
+                let opt2_y = dlg_y + 40.0;
+                if mouse.x >= dlg_x + 6.0
+                    && mouse.x <= dlg_x + dlg_w - 6.0
+                    && mouse.y >= opt2_y
+                    && mouse.y <= opt2_y + 26.0
+                {
+                    app.create_empty_3d_scene();
+                    app.editor.show_new_scene_dialog = false;
+                    return true;
+                }
+
+                if mouse.x < dlg_x
+                    || mouse.x > dlg_x + dlg_w
+                    || mouse.y < dlg_y
+                    || mouse.y > dlg_y + dlg_h
+                {
+                    app.editor.show_new_scene_dialog = false;
+                }
+            }
+
+            // Sahne Sekmeleri Cubugu Tiklamalari (Gecis, Kapatma ve + Butonu)
+            if mouse.y >= menu_h && mouse.y <= menu_h + scene_tab_h {
+                let mut cur_tab_x = vp_x + 8.0;
+                let mut clicked_tab_action = None;
+
+                for (idx, tab) in app.editor.open_scenes.iter().enumerate() {
+                    let display_title =
+                        format!("{}{}", tab.name, if tab.is_dirty { " (*)" } else { "" });
+                    let tab_w = ((display_title.len() as f32) * 7.5 + 46.0).max(90.0);
+                    let close_x = cur_tab_x + tab_w - 22.0;
+
+                    if mouse.x >= cur_tab_x && mouse.x <= cur_tab_x + tab_w {
+                        if mouse.x >= close_x {
+                            clicked_tab_action = Some((idx, true)); // Kapat
+                        } else {
+                            clicked_tab_action = Some((idx, false)); // Sekmeye Gec
+                        }
+                        break;
+                    }
+                    cur_tab_x += tab_w + 4.0;
+                }
+
+                if let Some((idx, is_close)) = clicked_tab_action {
+                    if is_close {
+                        app.close_scene_tab(idx);
+                    } else {
+                        app.switch_to_scene_tab(idx);
+                    }
+                    app.audio.play("sfx_blip");
+                    return true;
+                }
+
+                // [+] Sekme Ekle (Yeni Sahne Menusu Ac/Kapa)
+                let plus_x = cur_tab_x;
+                if mouse.x >= plus_x && mouse.x <= plus_x + 36.0 {
+                    app.editor.show_new_scene_dialog = !app.editor.show_new_scene_dialog;
+                    app.audio.play("sfx_blip");
+                    return true;
+                }
+                return true;
+            }
+
+            // Viewport Alt Arac Cubugu (Select, Move, Rotate, Scale, Brush, Eraser, Palette, Snap)
+            if mouse.y >= menu_h + scene_tab_h && mouse.y <= vp_canvas_y {
+                let mut t_x = vp_x + 6.0;
+                for &(tool, _, btn_w) in &VIEWPORT_TOOLS {
+                    if mouse.x >= t_x && mouse.x <= t_x + btn_w {
+                        app.editor.active_tool = tool;
+                        return true;
+                    }
+                    t_x += btn_w + 4.0;
+                }
+
+                // Eger Firca veya Silgi aktifse karo paletine tiklama kontrolu
+                if app.editor.active_tool == ViewportTool::TileBrush
+                    || app.editor.active_tool == ViewportTool::TileEraser
+                {
+                    t_x += 8.0;
+                    for &(lbl, tt, btn_w) in &TILE_PALETTE_ITEMS {
+                        if mouse.x >= t_x && mouse.x <= t_x + btn_w {
+                            app.editor.active_tile_type = tt;
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!("Aktif Karo Tipi: {} ({:?})", lbl, tt),
+                            });
+                            return true;
+                        }
+                        t_x += btn_w + 4.0;
+                    }
+                }
+
+                // Grid Snap Butonu (Saga hizali)
+                let snap_x = vp_x + vp_w - 74.0;
+                if mouse.x >= snap_x && mouse.x <= snap_x + 66.0 {
+                    app.editor.snap_to_grid = !app.editor.snap_to_grid;
+                    let msg = if app.editor.snap_to_grid {
+                        "Izgara Yapismasi (Snap) Acildi (16px)."
+                    } else {
+                        "Izgara Yapismasi (Snap) Kapatildi."
+                    };
+                    app.editor.logs.push(LogMessage {
+                        level: "INFO",
+                        text: msg.to_string(),
+                    });
+                    return true;
+                }
+            }
+
+            // Yuzen Zoom Rozeti ([-] % [+] ) (Sadece 2D Modunda)
+            if app.editor.workspace == WorkspaceMode::TwoD {
+                let zoom_box_x = vp_x + 28.0;
+                let zoom_box_y = vp_canvas_y + 20.0;
+                if mouse.x >= zoom_box_x
+                    && mouse.x <= zoom_box_x + 116.0
+                    && mouse.y >= zoom_box_y
+                    && mouse.y <= zoom_box_y + 20.0
+                {
+                    if mouse.x <= zoom_box_x + 30.0 {
+                        // [-] Kucult
+                        app.editor.camera.zoom = (app.editor.camera.zoom / 1.15).max(0.2);
+                    } else if mouse.x >= zoom_box_x + 86.0 {
+                        // [+] Buyut
+                        app.editor.camera.zoom = (app.editor.camera.zoom * 1.15).min(5.0);
+                    }
+                    return true;
+                }
+            }
+
+            // Viewport Tuval Alani Tiklama & Nesne Manipulasyonu
+            if mouse.x >= vp_x
+                && mouse.x <= vp_x + vp_w
+                && mouse.y >= vp_canvas_y
+                && mouse.y <= vp_canvas_y + vp_canvas_h
+            {
+                // 3D Workspace Modundayken: 3D Ray / Screen Picking & Gizmo Islemleri
+                if app.editor.workspace == WorkspaceMode::ThreeD {
+                    let aspect = vp_w / vp_canvas_h.max(1.0);
+                    let render_cam = app.editor.camera_3d.to_render_camera(aspect);
+                    let vp_mat = render_cam.view_projection();
+
+                    let project_pt = |pt: glam::Vec3| -> Option<Vec2> {
+                        let clip = vp_mat * glam::Vec4::new(pt.x, pt.y, pt.z, 1.0);
+                        if clip.w <= 0.05 {
+                            return None;
+                        }
+                        let ndc_x = clip.x / clip.w;
+                        let ndc_y = clip.y / clip.w;
+                        if !(-1.2..=1.2).contains(&ndc_x) || !(-1.2..=1.2).contains(&ndc_y) {
+                            return None;
+                        }
+                        let sx = vp_x + (ndc_x * 0.5 + 0.5) * vp_w;
+                        let sy = vp_canvas_y + (1.0 - (ndc_y * 0.5 + 0.5)) * vp_canvas_h;
+                        Some(Vec2::new(sx, sy))
+                    };
+
+                    // A. Secili 3D Varligin Gizmo Eksenlerine Tiklama Kontrolu
+                    if let Some(se) = app.editor.selected_entity {
+                        if let Some(t3) = app.registry.get::<Transform3D>(se) {
+                            let center = t3.translation;
+                            if let Some(sc) = project_pt(center) {
+                                let tool = app.editor.active_tool;
+
+                                // 1. Rotate Gizmo Cemberleri Kontrolu (Rotate veya Select aracinda)
+                                if tool == ViewportTool::Rotate || tool == ViewportTool::Select {
+                                    let radius = 1.25;
+                                    let segments = 24;
+                                    // Pitch (X Ekseni etrafinda - Kirmizi yay)
+                                    let mut hit_pitch = false;
+                                    for i in 0..=segments {
+                                        let angle =
+                                            (i as f32 / segments as f32) * std::f32::consts::TAU;
+                                        let pt_w = center
+                                            + glam::Vec3::new(
+                                                0.0,
+                                                angle.cos() * radius,
+                                                angle.sin() * radius,
+                                            );
+                                        if let Some(sp) = project_pt(pt_w) {
+                                            if (mouse - sp).length() <= 10.0 {
+                                                hit_pitch = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if hit_pitch {
+                                        app.editor.drag_mode = DragMode::Rotate3D {
+                                            axis: 0, // X ekseni etrafinda (Pitch)
+                                            start_rotation: t3.rotation,
+                                            start_mouse: mouse,
+                                        };
+                                        app.audio.play("sfx_blip");
+                                        return true;
+                                    }
+
+                                    // Yaw (Y Ekseni etrafinda - Yesil yay)
+                                    let mut hit_yaw = false;
+                                    for i in 0..=segments {
+                                        let angle =
+                                            (i as f32 / segments as f32) * std::f32::consts::TAU;
+                                        let pt_w = center
+                                            + glam::Vec3::new(
+                                                angle.cos() * radius,
+                                                0.0,
+                                                angle.sin() * radius,
+                                            );
+                                        if let Some(sp) = project_pt(pt_w) {
+                                            if (mouse - sp).length() <= 10.0 {
+                                                hit_yaw = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if hit_yaw {
+                                        app.editor.drag_mode = DragMode::Rotate3D {
+                                            axis: 1, // Y ekseni etrafinda (Yaw)
+                                            start_rotation: t3.rotation,
+                                            start_mouse: mouse,
+                                        };
+                                        app.audio.play("sfx_blip");
+                                        return true;
+                                    }
+
+                                    // Roll (Z Ekseni etrafinda - Mavi yay)
+                                    let mut hit_roll = false;
+                                    for i in 0..=segments {
+                                        let angle =
+                                            (i as f32 / segments as f32) * std::f32::consts::TAU;
+                                        let pt_w = center
+                                            + glam::Vec3::new(
+                                                angle.cos() * radius,
+                                                angle.sin() * radius,
+                                                0.0,
+                                            );
+                                        if let Some(sp) = project_pt(pt_w) {
+                                            if (mouse - sp).length() <= 10.0 {
+                                                hit_roll = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if hit_roll {
+                                        app.editor.drag_mode = DragMode::Rotate3D {
+                                            axis: 2, // Z ekseni etrafinda (Roll)
+                                            start_rotation: t3.rotation,
+                                            start_mouse: mouse,
+                                        };
+                                        app.audio.play("sfx_blip");
+                                        return true;
+                                    }
+                                }
+
+                                // 2. Eksen Oklar ve Tutamaclar (Translate veya Scale)
+                                let axis_len = 1.6;
+
+                                // X Ekseni (Kirmizi)
+                                if let Some(sx) = project_pt(center + glam::Vec3::X * axis_len) {
+                                    let diff = sx - sc;
+                                    let len = diff.length();
+                                    if len > 1.0 {
+                                        let dir = diff / len;
+                                        let to_m = mouse - sc;
+                                        let proj = to_m.dot(dir);
+                                        let perp = (to_m - dir * proj).length();
+                                        if (0.0..=(len + 12.0)).contains(&proj) && perp <= 14.0 {
+                                            if tool == ViewportTool::Scale {
+                                                app.editor.drag_mode = DragMode::Scale3D {
+                                                    axis: 0,
+                                                    start_scale: t3.scale,
+                                                    start_mouse: mouse,
+                                                };
+                                            } else {
+                                                app.editor.drag_mode = DragMode::Translate3D {
+                                                    axis: 0,
+                                                    start_translation: t3.translation,
+                                                    start_mouse: mouse,
+                                                };
+                                            }
+                                            app.audio.play("sfx_blip");
+                                            return true;
+                                        }
+                                    }
+                                }
+
+                                // Y Ekseni (Yesil)
+                                if let Some(sy) = project_pt(center + glam::Vec3::Y * axis_len) {
+                                    let diff = sy - sc;
+                                    let len = diff.length();
+                                    if len > 1.0 {
+                                        let dir = diff / len;
+                                        let to_m = mouse - sc;
+                                        let proj = to_m.dot(dir);
+                                        let perp = (to_m - dir * proj).length();
+                                        if (0.0..=(len + 12.0)).contains(&proj) && perp <= 14.0 {
+                                            if tool == ViewportTool::Scale {
+                                                app.editor.drag_mode = DragMode::Scale3D {
+                                                    axis: 1,
+                                                    start_scale: t3.scale,
+                                                    start_mouse: mouse,
+                                                };
+                                            } else {
+                                                app.editor.drag_mode = DragMode::Translate3D {
+                                                    axis: 1,
+                                                    start_translation: t3.translation,
+                                                    start_mouse: mouse,
+                                                };
+                                            }
+                                            app.audio.play("sfx_blip");
+                                            return true;
+                                        }
+                                    }
+                                }
+
+                                // Z Ekseni (Mavi)
+                                if let Some(sz) = project_pt(center + glam::Vec3::Z * axis_len) {
+                                    let diff = sz - sc;
+                                    let len = diff.length();
+                                    if len > 1.0 {
+                                        let dir = diff / len;
+                                        let to_m = mouse - sc;
+                                        let proj = to_m.dot(dir);
+                                        let perp = (to_m - dir * proj).length();
+                                        if (0.0..=(len + 12.0)).contains(&proj) && perp <= 14.0 {
+                                            if tool == ViewportTool::Scale {
+                                                app.editor.drag_mode = DragMode::Scale3D {
+                                                    axis: 2,
+                                                    start_scale: t3.scale,
+                                                    start_mouse: mouse,
+                                                };
+                                            } else {
+                                                app.editor.drag_mode = DragMode::Translate3D {
+                                                    axis: 2,
+                                                    start_translation: t3.translation,
+                                                    start_mouse: mouse,
+                                                };
+                                            }
+                                            app.audio.play("sfx_blip");
+                                            return true;
+                                        }
+                                    }
+                                }
+
+                                // 3. Merkez Secici / Tasiyici
+                                if (mouse - sc).length() <= 14.0 {
+                                    if tool == ViewportTool::Scale {
+                                        app.editor.drag_mode = DragMode::Scale3D {
+                                            axis: 3, // Uniform Scale
+                                            start_scale: t3.scale,
+                                            start_mouse: mouse,
+                                        };
+                                    } else {
+                                        app.editor.drag_mode = DragMode::Translate3D {
+                                            axis: 0, // Varsayilan serbest tasima
+                                            start_translation: t3.translation,
+                                            start_mouse: mouse,
+                                        };
+                                    }
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+
+                    // B. 3D Sahnedeki Varliklari Secme (Analitik 3D Raycasting & Projeksiyon Hibrit Secimi)
+                    let ndc_x = ((mouse.x - vp_x) / vp_w) * 2.0 - 1.0;
+                    let ndc_y = 1.0 - ((mouse.y - vp_canvas_y) / vp_canvas_h) * 2.0;
+
+                    let inv_vp = vp_mat.inverse();
+                    let p_near_h = inv_vp * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+                    let p_far_h = inv_vp * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+
+                    let mut hit_3d = None;
+
+                    if p_near_h.w.abs() > 1e-6 && p_far_h.w.abs() > 1e-6 {
+                        let p_near = p_near_h.truncate() / p_near_h.w;
+                        let p_far = p_far_h.truncate() / p_far_h.w;
+                        let ray_dir = (p_far - p_near).normalize();
+                        let ray_3d = rugeng_physics::Ray3D::new(p_near, ray_dir, 1000.0);
+
+                        let mut min_ray_dist = f32::INFINITY;
+
+                        let entities_3d: Vec<(Entity, Transform3D, Option<Mesh3DComponent>)> = app
+                            .registry
+                            .entities::<Transform3D>()
+                            .into_iter()
+                            .filter_map(|e| {
+                                let t3 = app.registry.get::<Transform3D>(e).copied()?;
+                                let m3 = app.registry.get::<Mesh3DComponent>(e).cloned();
+                                Some((e, t3, m3))
+                            })
+                            .collect();
+
+                        for (ent, t3, m3) in &entities_3d {
+                            let mut entity_hit_dist = None;
+
+                            if let Some(mesh_comp) = m3 {
+                                if mesh_comp.mesh_name == "sphere" {
+                                    let radius =
+                                        (t3.scale.x.max(t3.scale.y).max(t3.scale.z) * 0.5).max(0.2);
+                                    let sphere =
+                                        rugeng_physics::BoundingSphere::new(t3.translation, radius);
+                                    if let Some(hit) =
+                                        rugeng_physics::ray_intersect_sphere(&ray_3d, &sphere)
+                                    {
+                                        entity_hit_dist = Some(hit.dist);
+                                    }
+                                } else {
+                                    let half_ext = (t3.scale * 0.5).max(glam::Vec3::splat(0.2));
+                                    let aabb = rugeng_physics::AABB3D::from_center_half_extents(
+                                        t3.translation,
+                                        half_ext,
+                                    );
+                                    if let Some(hit) =
+                                        rugeng_physics::ray_intersect_aabb_3d(&ray_3d, &aabb)
+                                    {
+                                        entity_hit_dist = Some(hit.dist);
+                                    }
+                                }
+                            } else {
+                                let half_ext = (t3.scale * 0.5).max(glam::Vec3::splat(0.2));
+                                let aabb = rugeng_physics::AABB3D::from_center_half_extents(
+                                    t3.translation,
+                                    half_ext,
+                                );
+                                if let Some(hit) =
+                                    rugeng_physics::ray_intersect_aabb_3d(&ray_3d, &aabb)
+                                {
+                                    entity_hit_dist = Some(hit.dist);
+                                }
+                            }
+
+                            if let Some(dist) = entity_hit_dist {
+                                if dist < min_ray_dist {
+                                    min_ray_dist = dist;
+                                    hit_3d = Some(*ent);
+                                }
+                            }
+                        }
+                    }
+
+                    if hit_3d.is_none() {
+                        let mut closest_dist = 36.0;
+                        let entities_3d: Vec<(Entity, Transform3D)> = app
+                            .registry
+                            .entities::<Transform3D>()
+                            .into_iter()
+                            .filter_map(|e| {
+                                let t3 = app.registry.get::<Transform3D>(e).copied()?;
+                                Some((e, t3))
+                            })
+                            .collect();
+
+                        for (ent, t3) in entities_3d {
+                            if let Some(sp) = project_pt(t3.translation) {
+                                let dist = (mouse - sp).length();
+                                if dist < closest_dist {
+                                    closest_dist = dist;
+                                    hit_3d = Some(ent);
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(new_3d) = hit_3d {
+                        app.editor.selected_entity = Some(new_3d);
+                        app.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: format!(
+                                "3D Varlik #{}:{} secildi.",
+                                new_3d.index(),
+                                new_3d.generation()
+                            ),
+                        });
+                        app.audio.play("sfx_blip");
+                        return true;
+                    }
+
+                    app.editor.selected_entity = None;
+                    app.editor.drag_mode = DragMode::None;
+                    return true;
+                }
+
+                // 2D Workspace Modu
+                let cam = &app.editor.camera;
+                let vp_center = Vec2::new(vp_x + vp_w * 0.5, vp_canvas_y + vp_canvas_h * 0.5);
+                let world_m = (mouse - vp_center) / cam.zoom + cam.pos;
+
+                if app.editor.active_tool == ViewportTool::TileBrush
+                    || app.editor.active_tool == ViewportTool::TileEraser
+                {
+                    app.apply_tile_tool(world_m);
+                    return true;
+                }
+
+                // 1. Secili Varlik ve Gizmo Tutamac Kontrolu
+                if let Some(e) = app.editor.selected_entity {
+                    if let Some(tr) = app.registry.get::<Transform2D>(e).copied() {
+                        app.editor.drag_start_transform = Some(tr);
+                        let screen_pos = vp_center + (tr.pos - cam.pos) * cam.zoom;
+                        let screen_size = tr.size * cam.zoom;
+                        let draw_x = screen_pos.x - screen_size.x * 0.5;
+                        let draw_y = screen_pos.y - screen_size.y * 0.5;
+
+                        // A. Dondurme Tutamaci Kontrolu
+                        let rot_len = 38.0;
+                        let tip_x = screen_pos.x + tr.rotation.cos() * rot_len;
+                        let tip_y = screen_pos.y + tr.rotation.sin() * rot_len;
+                        let dist_rot = (mouse - Vec2::new(tip_x, tip_y)).length();
+                        if dist_rot <= 14.0 {
+                            let start_angle =
+                                (mouse.y - screen_pos.y).atan2(mouse.x - screen_pos.x);
+                            app.editor.drag_mode = DragMode::Rotate {
+                                center: tr.pos,
+                                start_rotation: tr.rotation,
+                                start_angle,
+                            };
+                            return true;
+                        }
+
+                        // B. 4 Kose Boyutlandirma Tutamaci Kontrolu
+                        let corners = [
+                            Vec2::new(draw_x, draw_y),
+                            Vec2::new(draw_x + screen_size.x, draw_y),
+                            Vec2::new(draw_x, draw_y + screen_size.y),
+                            Vec2::new(draw_x + screen_size.x, draw_y + screen_size.y),
+                        ];
+                        let mut hit_corner = false;
+                        for c in corners {
+                            if (mouse - c).length() <= 12.0 {
+                                hit_corner = true;
+                                break;
+                            }
+                        }
+                        if hit_corner {
+                            app.editor.drag_mode = DragMode::Scale {
+                                start_size: tr.size,
+                                start_world_mouse: world_m,
+                            };
+                            return true;
+                        }
+
+                        // C. Govde Tiklamasi
+                        if mouse.x >= draw_x
+                            && mouse.x <= draw_x + screen_size.x
+                            && mouse.y >= draw_y
+                            && mouse.y <= draw_y + screen_size.y
+                        {
+                            match app.editor.active_tool {
+                                ViewportTool::Rotate => {
+                                    let start_angle =
+                                        (mouse.y - screen_pos.y).atan2(mouse.x - screen_pos.x);
+                                    app.editor.drag_mode = DragMode::Rotate {
+                                        center: tr.pos,
+                                        start_rotation: tr.rotation,
+                                        start_angle,
+                                    };
+                                }
+                                ViewportTool::Scale => {
+                                    app.editor.drag_mode = DragMode::Scale {
+                                        start_size: tr.size,
+                                        start_world_mouse: world_m,
+                                    };
+                                }
+                                ViewportTool::Select
+                                | ViewportTool::Move
+                                | ViewportTool::TileBrush
+                                | ViewportTool::TileEraser => {
+                                    app.editor.drag_mode = DragMode::Translate {
+                                        start_entity_pos: tr.pos,
+                                        start_world_mouse: world_m,
+                                    };
+                                }
+                            }
+                            return true;
+                        }
+                    }
+                }
+
+                // 2. Sahnedeki Diger Varliklari Secme
+                let mut hit_entity = None;
+                let mut hit_tr = None;
+                app.registry
+                    .view1_ref::<Transform2D, _>(|other_e, other_tr| {
+                        if hit_entity.is_none() {
+                            let half_sz = other_tr.size * 0.5;
+                            if world_m.x >= other_tr.pos.x - half_sz.x
+                                && world_m.x <= other_tr.pos.x + half_sz.x
+                                && world_m.y >= other_tr.pos.y - half_sz.y
+                                && world_m.y <= other_tr.pos.y + half_sz.y
+                            {
+                                hit_entity = Some(other_e);
+                                hit_tr = Some(*other_tr);
+                            }
+                        }
+                    });
+
+                if let (Some(new_e), Some(new_tr)) = (hit_entity, hit_tr) {
+                    app.editor.selected_entity = Some(new_e);
+                    app.editor.drag_start_transform = Some(new_tr);
+                    app.editor.logs.push(LogMessage {
+                        level: "INFO",
+                        text: format!("Dugum #{}:{} secildi.", new_e.index(), new_e.generation()),
+                    });
+                    match app.editor.active_tool {
+                        ViewportTool::Rotate => {
+                            let other_screen_pos = vp_center + (new_tr.pos - cam.pos) * cam.zoom;
+                            let start_angle =
+                                (mouse.y - other_screen_pos.y).atan2(mouse.x - other_screen_pos.x);
+                            app.editor.drag_mode = DragMode::Rotate {
+                                center: new_tr.pos,
+                                start_rotation: new_tr.rotation,
+                                start_angle,
+                            };
+                        }
+                        ViewportTool::Scale => {
+                            app.editor.drag_mode = DragMode::Scale {
+                                start_size: new_tr.size,
+                                start_world_mouse: world_m,
+                            };
+                        }
+                        ViewportTool::Select
+                        | ViewportTool::Move
+                        | ViewportTool::TileBrush
+                        | ViewportTool::TileEraser => {
+                            app.editor.drag_mode = DragMode::Translate {
+                                start_entity_pos: new_tr.pos,
+                                start_world_mouse: world_m,
+                            };
+                        }
+                    }
+                    return true;
+                }
+
+                // Bos Tuvale Tiklama: Secimi Kaldir
+                app.editor.selected_entity = None;
+                app.editor.drag_mode = DragMode::None;
+                return true;
+            }
+        }
+
+        false
+    }
+}

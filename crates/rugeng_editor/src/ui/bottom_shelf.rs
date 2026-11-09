@@ -223,3 +223,35 @@ impl App {
         );
     }
 }
+
+impl crate::ui::Panel for crate::ui::BottomShelfPanel {
+    fn handle_click(
+        &mut self,
+        app: &mut App,
+        mouse: Vec2,
+        layout: &DockLayout,
+        _double_click: bool,
+    ) -> bool {
+        let screen_h = layout.screen_h;
+        let bottom_h = layout.bottom_h;
+        let vp_x = layout.vp_x;
+        let vp_w = layout.vp_w;
+
+        if mouse.x >= vp_x && mouse.x <= vp_x + vp_w && mouse.y >= screen_h - bottom_h {
+            let btm_tab_y = screen_h - 24.0;
+            if mouse.y >= btm_tab_y {
+                let mut b_x = vp_x + 8.0;
+                let btm_tabs = [BottomShelfTab::Output, BottomShelfTab::Debugger];
+                for tab in btm_tabs {
+                    if mouse.x >= b_x && mouse.x <= b_x + 78.0 {
+                        app.editor.bottom_shelf_tab = tab;
+                        return true;
+                    }
+                    b_x += 82.0;
+                }
+            }
+            return true;
+        }
+        false
+    }
+}

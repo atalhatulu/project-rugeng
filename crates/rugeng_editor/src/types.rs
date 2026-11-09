@@ -86,6 +86,12 @@ pub enum UndoAction {
         old: Option<String>,
         new: Option<String>,
     },
+    /// Sahne ağacı sürükle-bırak yeniden ebeveynleme (Reparent)
+    Reparent {
+        entity: Entity,
+        old_parent: Option<Entity>,
+        new_parent: Option<Entity>,
+    },
 }
 
 /// Satır içi metin düzenleme durumu (F2: düğüm yeniden adlandırma).
@@ -165,6 +171,108 @@ impl InlineTextEdit {
         // En yakın karakter sınırına yuvarla
         let idx = ((local_click_x + (char_step * 0.5)) / char_step) as usize;
         self.caret = idx.min(char_count);
+    }
+}
+
+/// Denetçide odaklanılabilen sayısal alan kimliği
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumericFieldId {
+    PosX,
+    PosY,
+    Rot,
+    SizeX,
+    SizeY,
+    Pos3X,
+    Pos3Y,
+    Pos3Z,
+    Rot3Pitch,
+    Rot3Yaw,
+    Rot3Roll,
+    Scale3X,
+    Scale3Y,
+    Scale3Z,
+}
+
+/// Sayısal girdi alanı odak ve düzenleme durumu
+#[derive(Clone, Debug, PartialEq)]
+pub struct InspectorNumericEdit {
+    pub entity: Entity,
+    pub field: NumericFieldId,
+    pub buffer: String,
+    pub caret: usize,
+    pub is_invalid: bool,
+}
+
+impl InspectorNumericEdit {
+    pub fn new(entity: Entity, field: NumericFieldId, initial_value: f32) -> Self {
+        // Gereksiz sıfırları temizle, temiz sayı formatı üret
+        let mut buffer = format!("{:.2}", initial_value);
+        if buffer.contains('.') {
+            while buffer.ends_with('0') {
+                buffer.pop();
+            }
+            if buffer.ends_with('.') {
+                buffer.pop();
+            }
+        }
+        let caret = buffer.chars().count();
+        Self {
+            entity,
+            field,
+            buffer,
+            caret,
+            is_invalid: false,
+        }
+    }
+
+    pub fn insert(&mut self, ch: char) {
+        if ch.is_control() {
+            return;
+        }
+        let mut cs: Vec<char> = self.buffer.chars().collect();
+        cs.insert(self.caret.min(cs.len()), ch);
+        self.buffer = cs.into_iter().collect();
+        self.caret += 1;
+        self.validate();
+    }
+
+    pub fn backspace(&mut self) -> bool {
+        let mut cs: Vec<char> = self.buffer.chars().collect();
+        self.caret = self.caret.min(cs.len());
+        if self.caret == 0 {
+            return false;
+        }
+        cs.remove(self.caret - 1);
+        self.buffer = cs.into_iter().collect();
+        self.caret -= 1;
+        self.validate();
+        true
+    }
+
+    pub fn delete_forward(&mut self) -> bool {
+        let mut cs: Vec<char> = self.buffer.chars().collect();
+        self.caret = self.caret.min(cs.len());
+        if self.caret < cs.len() {
+            cs.remove(self.caret);
+            self.buffer = cs.into_iter().collect();
+            self.validate();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn move_caret(&mut self, delta: i32) {
+        let len = self.buffer.chars().count() as i32;
+        self.caret = (self.caret as i32 + delta).clamp(0, len) as usize;
+    }
+
+    pub fn validate(&mut self) {
+        self.is_invalid = self.buffer.trim().parse::<f32>().is_err();
+    }
+
+    pub fn parse_value(&self) -> Result<f32, std::num::ParseFloatError> {
+        self.buffer.trim().parse::<f32>()
     }
 }
 
@@ -452,6 +560,18 @@ pub enum DragMode {
         start_bottom_h: f32,
         start_mouse_y: f32,
     },
+    SceneTreeDrag {
+        dragged_entity: Entity,
+        drop_target: Option<Entity>,
+        drop_zone: TreeDropZone,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeDropZone {
+    Before,
+    Into,
+    After,
 }
 
 #[derive(Clone, Debug)]
@@ -586,5 +706,26 @@ mod inline_text_edit_tests {
         // Metin sonunun çok ötesine tıklama -> son karakter (8) ile sınırlandırılmalı
         e.set_caret_from_click_x(char_step * 50.0, scale);
         assert_eq!(e.caret, 8);
+    }
+
+    #[test]
+    fn numeric_edit_input_and_parse_validation() {
+        use super::{InspectorNumericEdit, NumericFieldId};
+        let mut n = InspectorNumericEdit::new(Entity::new(1, 0), NumericFieldId::Pos3X, 42.5);
+        assert_eq!(n.buffer, "42.5");
+        assert_eq!(n.parse_value(), Ok(42.5));
+        assert!(!n.is_invalid);
+
+        // Harf ekleyip doğrulama (geçersiz sayı)
+        n.insert('a');
+        assert_eq!(n.buffer, "42.5a");
+        assert!(n.parse_value().is_err());
+        assert!(n.is_invalid);
+
+        // Backspace ile düzeltme
+        assert!(n.backspace());
+        assert_eq!(n.buffer, "42.5");
+        assert_eq!(n.parse_value(), Ok(42.5));
+        assert!(!n.is_invalid);
     }
 }

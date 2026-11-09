@@ -6,14 +6,124 @@ use crate::ui::dock_layout::DockLayout;
 use crate::App;
 use glam::Vec2;
 use rugeng_core::{
-    interpolate_particle_color, Animation2DComponent, Collider2D, Entity, Mesh3DComponent,
-    NodeName, Parent, ParticleEmitterComponent, ScriptComponent, SpriteColor, SpriteTexture,
-    Text2DComponent, TileType, Tilemap2DComponent, Transform2D, Transform3D, Velocity2D, ZIndex2D,
+    interpolate_particle_color, Animation2DComponent, AnimationClip, Collider2D, Entity,
+    Mesh3DComponent, NodeName, Parent, ParticleEmitterComponent, ScriptComponent, SpriteColor,
+    SpriteTexture, Text2DComponent, TileType, Tilemap2DComponent, Transform2D, Transform3D,
+    Velocity2D, ZIndex2D,
 };
 use rugeng_render::font;
 use rugeng_render::pipeline_2d::QuadInstance;
 
 impl App {
+    /// Inspector sayısal alan çizim yardımcısı (Odak, geçersizlik ve imleç desteği ile)
+    pub(crate) fn render_numeric_field(
+        &self,
+        instances: &mut Vec<QuadInstance>,
+        rect: [f32; 4], // [x, y, w, h]
+        label: &str,
+        current_val: f32,
+        entity: Entity,
+        field: NumericFieldId,
+    ) {
+        let theme = self.editor.theme;
+        let is_focused = self
+            .editor
+            .numeric_edit
+            .as_ref()
+            .map(|ne| ne.entity == entity && ne.field == field)
+            .unwrap_or(false);
+
+        // Arka plan
+        instances.push(QuadInstance::new(
+            [rect[0], rect[1]],
+            [rect[2], rect[3]],
+            if is_focused {
+                theme.input_bg
+            } else {
+                theme.card_bg
+            },
+            0,
+        ));
+
+        // Kenarlık: Odaklıysa mavi veya kırmızı (geçersizse), odaklı değilse ince kenarlık
+        let (border_col, border_w) = if is_focused {
+            let is_inv = self
+                .editor
+                .numeric_edit
+                .as_ref()
+                .map(|ne| ne.is_invalid)
+                .unwrap_or(false);
+            if is_inv {
+                (theme.danger, 1.5)
+            } else {
+                (theme.accent, 1.5)
+            }
+        } else {
+            (theme.border_subtle, 1.0)
+        };
+
+        instances.push(QuadInstance::new(
+            [rect[0], rect[1]],
+            [rect[2], border_w],
+            border_col,
+            0,
+        ));
+        instances.push(QuadInstance::new(
+            [rect[0], rect[1] + rect[3] - border_w],
+            [rect[2], border_w],
+            border_col,
+            0,
+        ));
+        instances.push(QuadInstance::new(
+            [rect[0], rect[1]],
+            [border_w, rect[3]],
+            border_col,
+            0,
+        ));
+        instances.push(QuadInstance::new(
+            [rect[0] + rect[2] - border_w, rect[1]],
+            [border_w, rect[3]],
+            border_col,
+            0,
+        ));
+
+        // Metin içeriği ve imleç
+        let text_col = if is_focused {
+            let is_inv = self
+                .editor
+                .numeric_edit
+                .as_ref()
+                .map(|ne| ne.is_invalid)
+                .unwrap_or(false);
+            if is_inv {
+                theme.danger
+            } else {
+                theme.text_primary
+            }
+        } else {
+            theme.text_primary
+        };
+
+        let display_str = if is_focused {
+            let ne = self.editor.numeric_edit.as_ref().unwrap();
+            let cs: Vec<char> = ne.buffer.chars().collect();
+            let pos = ne.caret.min(cs.len());
+            let head: String = cs[..pos].iter().collect();
+            let tail: String = cs[pos..].iter().collect();
+            format!("{}▏{}", head, tail)
+        } else {
+            format!("{:.1}", current_val)
+        };
+
+        font::draw_text(
+            instances,
+            &display_str,
+            rect[0] + 4.0,
+            rect[1] + (rect[3] - 12.0) * 0.5,
+            1.15,
+            text_col,
+        );
+    }
     pub(crate) fn render_inspector(&self, instances: &mut Vec<QuadInstance>, layout: &DockLayout) {
         let selected_e = self.editor.selected_entity;
         let screen_w = layout.screen_w;
@@ -181,18 +291,40 @@ impl App {
                     [224, 169, 66, 255],
                 );
 
-                // Position X/Y/Z
+                // Position X/Y/Z Numeric Fields
                 font::draw_text(
                     instances,
-                    &format!(
-                        "Pos X: {:.1}  Y: {:.1}  Z: {:.1}",
-                        t3.translation.x, t3.translation.y, t3.translation.z
-                    ),
+                    "Pos:",
                     insp_x + 14.0,
                     c3d_y + 26.0,
                     1.15,
-                    text_norm,
+                    text_dim,
                 );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 44.0, c3d_y + 24.0, 34.0, 16.0],
+                    "X",
+                    t3.translation.x,
+                    e,
+                    NumericFieldId::Pos3X,
+                );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 82.0, c3d_y + 24.0, 34.0, 16.0],
+                    "Y",
+                    t3.translation.y,
+                    e,
+                    NumericFieldId::Pos3Y,
+                );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 120.0, c3d_y + 24.0, 34.0, 16.0],
+                    "Z",
+                    t3.translation.z,
+                    e,
+                    NumericFieldId::Pos3Z,
+                );
+
                 // X - / +
                 instances.push(QuadInstance::new(
                     [insp_x + 160.0, c3d_y + 24.0],
@@ -283,21 +415,41 @@ impl App {
                     godot_blue,
                 );
 
-                // Rotation Euler
+                // Rotation Euler Numeric Fields
                 let (pitch, yaw, roll) = t3.rotation.to_euler(glam::EulerRot::YXZ);
                 font::draw_text(
                     instances,
-                    &format!(
-                        "Rot: P:{:.0} Y:{:.0} R:{:.0}",
-                        pitch.to_degrees(),
-                        yaw.to_degrees(),
-                        roll.to_degrees()
-                    ),
+                    "Rot:",
                     insp_x + 14.0,
                     c3d_y + 68.0,
                     1.15,
-                    text_norm,
+                    text_dim,
                 );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 44.0, c3d_y + 66.0, 34.0, 16.0],
+                    "P",
+                    pitch.to_degrees(),
+                    e,
+                    NumericFieldId::Rot3Pitch,
+                );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 82.0, c3d_y + 66.0, 34.0, 16.0],
+                    "Y",
+                    yaw.to_degrees(),
+                    e,
+                    NumericFieldId::Rot3Yaw,
+                );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 120.0, c3d_y + 66.0, 34.0, 16.0],
+                    "R",
+                    roll.to_degrees(),
+                    e,
+                    NumericFieldId::Rot3Roll,
+                );
+
                 // Pitch - / +
                 instances.push(QuadInstance::new(
                     [insp_x + 160.0, c3d_y + 66.0],
@@ -329,18 +481,40 @@ impl App {
                 ));
                 font::draw_text(instances, "Y+", insp_x + 248.0, c3d_y + 68.0, 1.0, text_dim);
 
-                // Scale X/Y/Z
+                // Scale X/Y/Z Numeric Fields
                 font::draw_text(
                     instances,
-                    &format!(
-                        "Scale: {:.1}x{:.1}x{:.1}",
-                        t3.scale.x, t3.scale.y, t3.scale.z
-                    ),
+                    "Scl:",
                     insp_x + 14.0,
                     c3d_y + 90.0,
                     1.15,
-                    text_norm,
+                    text_dim,
                 );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 44.0, c3d_y + 88.0, 34.0, 16.0],
+                    "X",
+                    t3.scale.x,
+                    e,
+                    NumericFieldId::Scale3X,
+                );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 82.0, c3d_y + 88.0, 34.0, 16.0],
+                    "Y",
+                    t3.scale.y,
+                    e,
+                    NumericFieldId::Scale3Y,
+                );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 120.0, c3d_y + 88.0, 34.0, 16.0],
+                    "Z",
+                    t3.scale.z,
+                    e,
+                    NumericFieldId::Scale3Z,
+                );
+
                 instances.push(QuadInstance::new(
                     [insp_x + 160.0, c3d_y + 88.0],
                     [32.0, 15.0],
@@ -637,13 +811,13 @@ impl App {
                     1.3,
                     text_dim,
                 );
-                font::draw_text(
+                self.render_numeric_field(
                     instances,
-                    &format!("{:.1}", curr_pos.x),
-                    insp_x + 90.0,
-                    c1_y + 26.0,
-                    1.3,
-                    text_norm,
+                    [insp_x + 90.0, c1_y + 24.0, 60.0, 16.0],
+                    "X",
+                    curr_pos.x,
+                    e,
+                    NumericFieldId::PosX,
                 );
                 instances.push(QuadInstance::new(
                     [insp_x + 160.0, c1_y + 24.0],
@@ -695,13 +869,13 @@ impl App {
                     1.3,
                     text_dim,
                 );
-                font::draw_text(
+                self.render_numeric_field(
                     instances,
-                    &format!("{:.1}", curr_pos.y),
-                    insp_x + 90.0,
-                    c1_y + 46.0,
-                    1.3,
-                    text_norm,
+                    [insp_x + 90.0, c1_y + 44.0, 60.0, 16.0],
+                    "Y",
+                    curr_pos.y,
+                    e,
+                    NumericFieldId::PosY,
                 );
                 instances.push(QuadInstance::new(
                     [insp_x + 160.0, c1_y + 44.0],
@@ -754,13 +928,13 @@ impl App {
                     1.3,
                     text_dim,
                 );
-                font::draw_text(
+                self.render_numeric_field(
                     instances,
-                    &format!("{:.1} deg", rot_deg),
-                    insp_x + 90.0,
-                    c1_y + 68.0,
-                    1.3,
-                    text_norm,
+                    [insp_x + 90.0, c1_y + 66.0, 60.0, 16.0],
+                    "Rot",
+                    rot_deg,
+                    e,
+                    NumericFieldId::Rot,
                 );
                 instances.push(QuadInstance::new(
                     [insp_x + 160.0, c1_y + 66.0],
@@ -792,11 +966,27 @@ impl App {
                 // Scale Satırı
                 font::draw_text(
                     instances,
-                    &format!("Scale: {:.0} x {:.0}", curr_size.x, curr_size.y),
+                    "Scale W/H:",
                     insp_x + 14.0,
                     c1_y + 90.0,
                     1.3,
                     text_dim,
+                );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 90.0, c1_y + 88.0, 30.0, 16.0],
+                    "W",
+                    curr_size.x,
+                    e,
+                    NumericFieldId::SizeX,
+                );
+                self.render_numeric_field(
+                    instances,
+                    [insp_x + 124.0, c1_y + 88.0, 30.0, 16.0],
+                    "H",
+                    curr_size.y,
+                    e,
+                    NumericFieldId::SizeY,
                 );
                 instances.push(QuadInstance::new(
                     [insp_x + 160.0, c1_y + 88.0],
@@ -1801,5 +1991,1062 @@ impl App {
                 text_dim,
             );
         }
+    }
+}
+
+impl crate::ui::Panel for crate::ui::InspectorPanel {
+    fn handle_click(
+        &mut self,
+        app: &mut App,
+        mouse: Vec2,
+        layout: &DockLayout,
+        _double_click: bool,
+    ) -> bool {
+        let menu_h = layout.menu_h;
+        let right_w = layout.right_w;
+        let insp_x = layout.insp_x;
+
+        if mouse.x >= insp_x && mouse.y > menu_h {
+            if let Some(e) = app.editor.selected_entity {
+                let insp_search_y = menu_h + 28.0;
+                let card_y = insp_search_y + 28.0;
+
+                let mut cur_insp_y = card_y + 30.0;
+                // 3D Varlik Kontrolleri (Transform3D & Mesh3DComponent)
+                if app.registry.has::<Transform3D>(e) {
+                    let c3d_y = cur_insp_y;
+
+                    // 3D Sayisal Alan Odaklanmasi (Position 3D: X, Y, Z)
+                    if mouse.y >= c3d_y + 24.0 && mouse.y <= c3d_y + 40.0 {
+                        if let Some(t3) = app.registry.get::<Transform3D>(e) {
+                            if mouse.x >= insp_x + 44.0 && mouse.x <= insp_x + 78.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Pos3X,
+                                    t3.translation.x,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            } else if mouse.x >= insp_x + 82.0 && mouse.x <= insp_x + 116.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Pos3Y,
+                                    t3.translation.y,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            } else if mouse.x >= insp_x + 120.0 && mouse.x <= insp_x + 154.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Pos3Z,
+                                    t3.translation.z,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 3D Sayisal Alan Odaklanmasi (Rotation 3D: Pitch, Yaw, Roll)
+                    if mouse.y >= c3d_y + 66.0 && mouse.y <= c3d_y + 82.0 {
+                        if let Some(t3) = app.registry.get::<Transform3D>(e) {
+                            let (pitch, yaw, roll) = t3.rotation.to_euler(glam::EulerRot::YXZ);
+                            if mouse.x >= insp_x + 44.0 && mouse.x <= insp_x + 78.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Rot3Pitch,
+                                    pitch.to_degrees(),
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            } else if mouse.x >= insp_x + 82.0 && mouse.x <= insp_x + 116.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Rot3Yaw,
+                                    yaw.to_degrees(),
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            } else if mouse.x >= insp_x + 120.0 && mouse.x <= insp_x + 154.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Rot3Roll,
+                                    roll.to_degrees(),
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 3D Sayisal Alan Odaklanmasi (Scale 3D: X, Y, Z)
+                    if mouse.y >= c3d_y + 88.0 && mouse.y <= c3d_y + 104.0 {
+                        if let Some(t3) = app.registry.get::<Transform3D>(e) {
+                            if mouse.x >= insp_x + 44.0 && mouse.x <= insp_x + 78.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Scale3X,
+                                    t3.scale.x,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            } else if mouse.x >= insp_x + 82.0 && mouse.x <= insp_x + 116.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Scale3Y,
+                                    t3.scale.y,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            } else if mouse.x >= insp_x + 120.0 && mouse.x <= insp_x + 154.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Scale3Z,
+                                    t3.scale.z,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+
+                    // Pos X- / X+
+                    if mouse.y >= c3d_y + 24.0 && mouse.y <= c3d_y + 39.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 184.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.translation.x -= 0.5;
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 188.0 && mouse.x <= insp_x + 212.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.translation.x += 0.5;
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        // Pos Y- / Y+
+                        if mouse.x >= insp_x + 216.0 && mouse.x <= insp_x + 240.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.translation.y -= 0.5;
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 244.0 && mouse.x <= insp_x + 268.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.translation.y += 0.5;
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                    }
+                    // Pos Z- / Z+
+                    if mouse.y >= c3d_y + 44.0 && mouse.y <= c3d_y + 59.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 184.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.translation.z -= 0.5;
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 188.0 && mouse.x <= insp_x + 212.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.translation.z += 0.5;
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                    }
+                    // Pitch P- / P+, Yaw Y- / Y+
+                    if mouse.y >= c3d_y + 66.0 && mouse.y <= c3d_y + 81.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 184.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.rotation *= glam::Quat::from_rotation_x(-0.1);
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 188.0 && mouse.x <= insp_x + 212.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.rotation *= glam::Quat::from_rotation_x(0.1);
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 216.0 && mouse.x <= insp_x + 240.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.rotation *= glam::Quat::from_rotation_y(-0.1);
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 244.0 && mouse.x <= insp_x + 268.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.rotation *= glam::Quat::from_rotation_y(0.1);
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                    }
+                    // Scale S- / S+
+                    if mouse.y >= c3d_y + 88.0 && mouse.y <= c3d_y + 103.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 192.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.scale =
+                                    (t3.scale - glam::Vec3::splat(0.2)).max(glam::Vec3::splat(0.1));
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 196.0 && mouse.x <= insp_x + 228.0 {
+                            let old_t3 = app.registry.get::<Transform3D>(e).copied();
+                            if let Some(t3) = app.registry.get_mut::<Transform3D>(e) {
+                                t3.scale += glam::Vec3::splat(0.2);
+                            }
+                            if let Some(old_t3) = old_t3 {
+                                app.push_transform3d_undo(e, old_t3);
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                    }
+                    // Mesh Secim Butonlari: Cube, Sphere, Plane
+                    if mouse.y >= c3d_y + 130.0 && mouse.y <= c3d_y + 146.0 {
+                        let mesh_btns = [
+                            ("cube", insp_x + 14.0),
+                            ("sphere", insp_x + 66.0),
+                            ("plane", insp_x + 118.0),
+                        ];
+                        for (name, bx) in mesh_btns {
+                            if mouse.x >= bx && mouse.x <= bx + 48.0 {
+                                if let Some(m3) = app.registry.get_mut::<Mesh3DComponent>(e) {
+                                    m3.mesh_name = name.to_string();
+                                }
+                                app.audio.play("sfx_blip");
+                                return true;
+                            }
+                        }
+                    }
+                    cur_insp_y += 160.0 + 8.0;
+                }
+
+                let has_tr3d = app.registry.has::<Transform3D>(e);
+                let has_tr2d = app.registry.has::<Transform2D>(e);
+                if has_tr2d || !has_tr3d {
+                    let c1_y = cur_insp_y;
+
+                    // 2D Sayisal Alan Odaklanmasi (Position X, Position Y)
+                    if mouse.y >= c1_y + 24.0 && mouse.y <= c1_y + 40.0 {
+                        if let Some(t) = app.registry.get::<Transform2D>(e) {
+                            if mouse.x >= insp_x + 90.0 && mouse.x <= insp_x + 150.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::PosX,
+                                    t.pos.x,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+                    if mouse.y >= c1_y + 44.0 && mouse.y <= c1_y + 60.0 {
+                        if let Some(t) = app.registry.get::<Transform2D>(e) {
+                            if mouse.x >= insp_x + 90.0 && mouse.x <= insp_x + 150.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::PosY,
+                                    t.pos.y,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 2D Sayisal Alan Odaklanmasi (Rotation)
+                    if mouse.y >= c1_y + 66.0 && mouse.y <= c1_y + 82.0 {
+                        if let Some(t) = app.registry.get::<Transform2D>(e) {
+                            if mouse.x >= insp_x + 90.0 && mouse.x <= insp_x + 150.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::Rot,
+                                    t.rotation.to_degrees(),
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 2D Sayisal Alan Odaklanmasi (Scale W / H)
+                    if mouse.y >= c1_y + 88.0 && mouse.y <= c1_y + 104.0 {
+                        if let Some(t) = app.registry.get::<Transform2D>(e) {
+                            if mouse.x >= insp_x + 90.0 && mouse.x <= insp_x + 120.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::SizeX,
+                                    t.size.x,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            } else if mouse.x >= insp_x + 124.0 && mouse.x <= insp_x + 154.0 {
+                                app.editor.numeric_edit = Some(InspectorNumericEdit::new(
+                                    e,
+                                    NumericFieldId::SizeY,
+                                    t.size.y,
+                                ));
+                                if let Some(w) = app.window.as_ref() {
+                                    w.set_ime_allowed(true);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+
+                    // Position X: [-] ve [+]
+                    if mouse.y >= c1_y + 24.0 && mouse.y <= c1_y + 40.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 192.0 {
+                            let old_t = app.registry.get::<Transform2D>(e).copied();
+                            if let Some(t) = app.registry.get_mut::<Transform2D>(e) {
+                                t.pos.x -= 10.0;
+                            }
+                            if let Some(old_t) = old_t {
+                                app.push_transform2d_undo(e, old_t);
+                            }
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 196.0 && mouse.x <= insp_x + 228.0 {
+                            let old_t = app.registry.get::<Transform2D>(e).copied();
+                            if let Some(t) = app.registry.get_mut::<Transform2D>(e) {
+                                t.pos.x += 10.0;
+                            }
+                            if let Some(old_t) = old_t {
+                                app.push_transform2d_undo(e, old_t);
+                            }
+                            return true;
+                        }
+                    }
+
+                    // Position Y: [-] ve [+]
+                    if mouse.y >= c1_y + 44.0 && mouse.y <= c1_y + 60.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 192.0 {
+                            let old_t = app.registry.get::<Transform2D>(e).copied();
+                            if let Some(t) = app.registry.get_mut::<Transform2D>(e) {
+                                t.pos.y -= 10.0;
+                            }
+                            if let Some(old_t) = old_t {
+                                app.push_transform2d_undo(e, old_t);
+                            }
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 196.0 && mouse.x <= insp_x + 228.0 {
+                            let old_t = app.registry.get::<Transform2D>(e).copied();
+                            if let Some(t) = app.registry.get_mut::<Transform2D>(e) {
+                                t.pos.y += 10.0;
+                            }
+                            if let Some(old_t) = old_t {
+                                app.push_transform2d_undo(e, old_t);
+                            }
+                            return true;
+                        }
+                    }
+
+                    // Rotation: R- ve R+
+                    if mouse.y >= c1_y + 66.0 && mouse.y <= c1_y + 82.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 192.0 {
+                            let old_t = app.registry.get::<Transform2D>(e).copied();
+                            if let Some(t) = app.registry.get_mut::<Transform2D>(e) {
+                                t.rotation -= 0.1;
+                            }
+                            if let Some(old_t) = old_t {
+                                app.push_transform2d_undo(e, old_t);
+                            }
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 196.0 && mouse.x <= insp_x + 228.0 {
+                            let old_t = app.registry.get::<Transform2D>(e).copied();
+                            if let Some(t) = app.registry.get_mut::<Transform2D>(e) {
+                                t.rotation += 0.1;
+                            }
+                            if let Some(old_t) = old_t {
+                                app.push_transform2d_undo(e, old_t);
+                            }
+                            return true;
+                        }
+                    }
+
+                    // Scale: W- ve W+
+                    if mouse.y >= c1_y + 88.0 && mouse.y <= c1_y + 104.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 192.0 {
+                            let old_t = app.registry.get::<Transform2D>(e).copied();
+                            if let Some(t) = app.registry.get_mut::<Transform2D>(e) {
+                                t.size.x = (t.size.x - 8.0).max(8.0);
+                                t.size.y = (t.size.y - 8.0).max(8.0);
+                            }
+                            if let Some(old_t) = old_t {
+                                app.push_transform2d_undo(e, old_t);
+                            }
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 196.0 && mouse.x <= insp_x + 228.0 {
+                            let old_t = app.registry.get::<Transform2D>(e).copied();
+                            if let Some(t) = app.registry.get_mut::<Transform2D>(e) {
+                                t.size.x += 8.0;
+                                t.size.y += 8.0;
+                            }
+                            if let Some(old_t) = old_t {
+                                app.push_transform2d_undo(e, old_t);
+                            }
+                            return true;
+                        }
+                    }
+
+                    // Z-Index: Z- ve Z+
+                    if mouse.y >= c1_y + 110.0 && mouse.y <= c1_y + 126.0 {
+                        if mouse.x >= insp_x + 160.0 && mouse.x <= insp_x + 192.0 {
+                            let old_z = app.registry.get::<ZIndex2D>(e).copied();
+                            let new_z = if let Some(zi) = app.registry.get_mut::<ZIndex2D>(e) {
+                                zi.z -= 1;
+                                zi.z
+                            } else {
+                                app.registry.emplace(e, ZIndex2D::new(-1));
+                                -1
+                            };
+                            app.push_zindex_undo(e, old_z);
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!("Dugum #{}: Z-Index {} yapildi.", e.index(), new_z),
+                            });
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        if mouse.x >= insp_x + 196.0 && mouse.x <= insp_x + 228.0 {
+                            let old_z = app.registry.get::<ZIndex2D>(e).copied();
+                            let new_z = if let Some(zi) = app.registry.get_mut::<ZIndex2D>(e) {
+                                zi.z += 1;
+                                zi.z
+                            } else {
+                                app.registry.emplace(e, ZIndex2D::new(1));
+                                1
+                            };
+                            app.push_zindex_undo(e, old_z);
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!("Dugum #{}: Z-Index {} yapildi.", e.index(), new_z),
+                            });
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                    }
+                    cur_insp_y += 136.0 + 8.0;
+                }
+
+                // Sprite 2D Doku Butonlarina Tiklama
+                let c2_y = cur_insp_y;
+                if mouse.y >= c2_y + 40.0 && mouse.y <= c2_y + 56.0 {
+                    let tex_options = [
+                        ("ship", "player_ship"),
+                        ("bug", "enemy_bug"),
+                        ("orb", "energy_orb"),
+                        ("heart", "heart_icon"),
+                        ("none", "none"),
+                    ];
+                    let mut opt_x = insp_x + 14.0;
+                    for (_label, key) in tex_options {
+                        if mouse.x >= opt_x && mouse.x <= opt_x + 38.0 {
+                            let old_tex = app.registry.get::<SpriteTexture>(e).cloned();
+                            if key == "none" {
+                                app.registry.remove::<SpriteTexture>(e);
+                                app.push_texture_undo(e, old_tex);
+                                app.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!(
+                                        "Dugum #{}:{} dokusu kaldirildi.",
+                                        e.index(),
+                                        e.generation()
+                                    ),
+                                });
+                            } else {
+                                app.registry.emplace(
+                                    e,
+                                    SpriteTexture {
+                                        name: key.to_string(),
+                                    },
+                                );
+                                app.push_texture_undo(e, old_tex);
+                                app.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!(
+                                        "Dugum #{}:{} dokusu res://{} olarak atandi.",
+                                        e.index(),
+                                        e.generation(),
+                                        key
+                                    ),
+                                });
+                            }
+                            return true;
+                        }
+                        opt_x += 42.0;
+                    }
+                }
+
+                // Sprite 2D Renk Paletine Tiklama
+                if mouse.y >= c2_y + 60.0 && mouse.y <= c2_y + 78.0 {
+                    let swatches = [
+                        [71, 140, 191, 255],  // Blue
+                        [228, 91, 91, 255],   // Red
+                        [66, 185, 131, 255],  // Green
+                        [224, 169, 66, 255],  // Yellow
+                        [168, 85, 247, 255],  // Purple
+                        [240, 240, 240, 255], // White
+                    ];
+                    let mut sw_x = insp_x + 92.0;
+                    for col in swatches {
+                        if mouse.x >= sw_x && mouse.x <= sw_x + 18.0 {
+                            let old_col = app.registry.get::<SpriteColor>(e).copied();
+                            if let Some(s) = app.registry.get_mut::<SpriteColor>(e) {
+                                s.color = col;
+                            }
+                            app.push_color_undo(e, old_col);
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} rengi guncellendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            return true;
+                        }
+                        sw_x += 22.0;
+                    }
+                }
+
+                // CollisionShape 2D Mod Degistirme Butonu ([Sensor / Kati])
+                let c3_y = c2_y + 92.0;
+                if mouse.y >= c3_y + 24.0
+                    && mouse.y <= c3_y + 44.0
+                    && mouse.x >= insp_x + 196.0
+                    && mouse.x <= insp_x + 282.0
+                {
+                    let old_col2 = app.registry.get::<Collider2D>(e).copied();
+                    if let Some(col) = app.registry.get_mut::<Collider2D>(e) {
+                        col.is_sensor = !col.is_sensor;
+                        let sensor_now = col.is_sensor;
+                        app.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: format!(
+                                "Dugum #{}:{} carpisma modu: {}",
+                                e.index(),
+                                e.generation(),
+                                if sensor_now { "Sensor" } else { "Kati" }
+                            ),
+                        });
+                        app.push_collider_undo(e, old_col2);
+                        app.audio.play("sfx_blip");
+                        return true;
+                    }
+                }
+
+                // Script Butonlarina Tiklama (Rotator, Patrol, Pulse, none)
+                let c4_y = c3_y + 60.0;
+                let c4_h = 66.0;
+                if mouse.y >= c4_y + 40.0 && mouse.y <= c4_y + 60.0 {
+                    let scr_opts = [
+                        ("Rotator", "RotatorScript"),
+                        ("Patrol", "PatrolScript"),
+                        ("Pulse", "PulseScript"),
+                        ("none", "none"),
+                    ];
+                    let mut so_x = insp_x + 14.0;
+                    for (_lbl, key) in scr_opts {
+                        if mouse.x >= so_x && mouse.x <= so_x + 54.0 {
+                            let old_scr = app.registry.get::<ScriptComponent>(e).cloned();
+                            if key == "none" {
+                                app.registry.remove::<ScriptComponent>(e);
+                                app.push_script_undo(e, old_scr);
+                                app.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!(
+                                        "Dugum #{}:{} betigi kaldirildi.",
+                                        e.index(),
+                                        e.generation()
+                                    ),
+                                });
+                            } else {
+                                let comp = match key {
+                                    "RotatorScript" => ScriptComponent::new_rotator(1.5),
+                                    "PatrolScript" => {
+                                        ScriptComponent::new_patrol(0, 80.0, 240.0, 75.0)
+                                    }
+                                    "PulseScript" => ScriptComponent::new_pulse(20.0, 44.0, 3.0),
+                                    _ => ScriptComponent::new_rotator(1.0),
+                                };
+                                app.registry.emplace(e, comp);
+                                app.push_script_undo(e, old_scr);
+                                app.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!(
+                                        "Dugum #{}:{} icin res://{} betigi baglandi.",
+                                        e.index(),
+                                        e.generation(),
+                                        key
+                                    ),
+                                });
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        so_x += 58.0;
+                    }
+                }
+
+                cur_insp_y = c4_y + c4_h + 8.0;
+
+                // Velocity 2D Butonlari ([-] / [+])
+                let has_vel = app.registry.has::<Velocity2D>(e);
+                if has_vel {
+                    let v_y = cur_insp_y;
+                    if mouse.y >= v_y + 24.0 && mouse.y <= v_y + 40.0 {
+                        // Vx [-]
+                        if mouse.x >= insp_x + 88.0 && mouse.x <= insp_x + 114.0 {
+                            if let Some(v) = app.registry.get_mut::<Velocity2D>(e) {
+                                v.vel.x -= 10.0;
+                            }
+                            return true;
+                        }
+                        // Vx [+]
+                        if mouse.x >= insp_x + 118.0 && mouse.x <= insp_x + 144.0 {
+                            if let Some(v) = app.registry.get_mut::<Velocity2D>(e) {
+                                v.vel.x += 10.0;
+                            }
+                            return true;
+                        }
+                        // Vy [-]
+                        if mouse.x >= insp_x + 228.0 && mouse.x <= insp_x + 254.0 {
+                            if let Some(v) = app.registry.get_mut::<Velocity2D>(e) {
+                                v.vel.y -= 10.0;
+                            }
+                            return true;
+                        }
+                        // Vy [+]
+                        if mouse.x >= insp_x + 258.0 && mouse.x <= insp_x + 284.0 {
+                            if let Some(v) = app.registry.get_mut::<Velocity2D>(e) {
+                                v.vel.y += 10.0;
+                            }
+                            return true;
+                        }
+                    }
+                    cur_insp_y += 52.0 + 8.0;
+                }
+
+                // Animation 2D Butonlari ([Oynat/Durdur], FPS [-]/[+])
+                let has_anim = app.registry.has::<Animation2DComponent>(e);
+                if has_anim {
+                    let a_y = cur_insp_y;
+                    if mouse.y >= a_y + 24.0 && mouse.y <= a_y + 42.0 {
+                        // [Oynat/Durdur]
+                        if mouse.x >= insp_x + 130.0 && mouse.x <= insp_x + 186.0 {
+                            if let Some(anim) = app.registry.get_mut::<Animation2DComponent>(e) {
+                                if anim.is_playing {
+                                    anim.pause();
+                                } else {
+                                    anim.resume();
+                                }
+                            }
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                        // FPS [-]
+                        if mouse.x >= insp_x + 240.0 && mouse.x <= insp_x + 262.0 {
+                            if let Some(anim) = app.registry.get_mut::<Animation2DComponent>(e) {
+                                let cur_clip = anim.current_clip.clone();
+                                if let Some(clip) = anim.clips.get_mut(&cur_clip) {
+                                    clip.fps = (clip.fps - 1.0).max(1.0);
+                                }
+                            }
+                            return true;
+                        }
+                        // FPS [+]
+                        if mouse.x >= insp_x + 266.0 && mouse.x <= insp_x + 288.0 {
+                            if let Some(anim) = app.registry.get_mut::<Animation2DComponent>(e) {
+                                let cur_clip = anim.current_clip.clone();
+                                if let Some(clip) = anim.clips.get_mut(&cur_clip) {
+                                    clip.fps = (clip.fps + 1.0).min(60.0);
+                                }
+                            }
+                            return true;
+                        }
+                    }
+                    cur_insp_y += 56.0 + 8.0;
+                }
+
+                // Tilemap 2D Butonlari (Temizle, Firca, Silgi, Karo Paleti)
+                let has_tilemap = app.registry.has::<Tilemap2DComponent>(e);
+                if has_tilemap {
+                    let tm_y = cur_insp_y;
+                    // [Haritayi Temizle]
+                    if mouse.y >= tm_y + 23.0
+                        && mouse.y <= tm_y + 41.0
+                        && mouse.x >= insp_x + right_w - 96.0
+                        && mouse.x <= insp_x + right_w - 16.0
+                    {
+                        if let Some(map) = app.registry.get_mut::<Tilemap2DComponent>(e) {
+                            map.clear();
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} harita karolari temizlendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                        }
+                        app.editor.is_scene_dirty = true;
+                        app.audio.play("sfx_blip");
+                        return true;
+                    }
+
+                    // [Firca] Modu Butonu
+                    if mouse.y >= tm_y + 48.0
+                        && mouse.y <= tm_y + 68.0
+                        && mouse.x >= insp_x + 14.0
+                        && mouse.x <= insp_x + 84.0
+                    {
+                        app.editor.active_tool = ViewportTool::TileBrush;
+                        app.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: "Tilemap Firca Modu Aktif.".to_string(),
+                        });
+                        app.audio.play("sfx_blip");
+                        return true;
+                    }
+
+                    // [Silgi] Modu Butonu
+                    if mouse.y >= tm_y + 48.0
+                        && mouse.y <= tm_y + 68.0
+                        && mouse.x >= insp_x + 90.0
+                        && mouse.x <= insp_x + 160.0
+                    {
+                        app.editor.active_tool = ViewportTool::TileEraser;
+                        app.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: "Tilemap Silgi Modu Aktif.".to_string(),
+                        });
+                        app.audio.play("sfx_blip");
+                        return true;
+                    }
+
+                    // Karo Paleti Butonlari (Cimen, Tas, Metal, Lav, Su)
+                    if mouse.y >= tm_y + 74.0 && mouse.y <= tm_y + 96.0 {
+                        let tile_palette = [
+                            TileType::Grass,
+                            TileType::Stone,
+                            TileType::Metal,
+                            TileType::Lava,
+                            TileType::Water,
+                        ];
+                        let mut pal_x = insp_x + 14.0;
+                        for tt in tile_palette {
+                            if mouse.x >= pal_x && mouse.x <= pal_x + 48.0 {
+                                app.editor.active_tile_type = tt;
+                                app.editor.active_tool = ViewportTool::TileBrush;
+                                app.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!("Firca Karosu Secildi: {:?}", tt),
+                                });
+                                app.audio.play("sfx_blip");
+                                return true;
+                            }
+                            pal_x += 52.0;
+                        }
+                    }
+
+                    cur_insp_y += 104.0 + 8.0;
+                }
+
+                // BILESEN 8: Parcacik Yayici (ParticleEmitterComponent) Karti Tiklamalari
+                if app.registry.has::<ParticleEmitterComponent>(e) {
+                    let p_y = cur_insp_y;
+                    if mouse.x >= insp_x + 8.0 && mouse.x <= insp_x + right_w - 8.0 {
+                        // [Patlat (Burst)] Butonu
+                        if mouse.x >= insp_x + 14.0
+                            && mouse.x <= insp_x + 124.0
+                            && mouse.y >= p_y + 48.0
+                            && mouse.y <= p_y + 68.0
+                        {
+                            let pos = app
+                                .registry
+                                .get::<Transform2D>(e)
+                                .map(|t| t.pos)
+                                .unwrap_or(Vec2::ZERO);
+                            if let Some(p) = app.registry.get_mut::<ParticleEmitterComponent>(e) {
+                                p.burst(20, pos);
+                                app.audio.play("sfx_laser");
+                                app.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!(
+                                        "Dugum #{}:{} icin parcacik patlatildi.",
+                                        e.index(),
+                                        e.generation()
+                                    ),
+                                });
+                            }
+                            return true;
+                        }
+                        // [Baslat / Durdur] Butonu
+                        if mouse.x >= insp_x + 130.0
+                            && mouse.x <= insp_x + 240.0
+                            && mouse.y >= p_y + 48.0
+                            && mouse.y <= p_y + 68.0
+                        {
+                            if let Some(p) = app.registry.get_mut::<ParticleEmitterComponent>(e) {
+                                p.is_active = !p.is_active;
+                                app.audio.play("sfx_blip");
+                                app.editor.logs.push(LogMessage {
+                                    level: "INFO",
+                                    text: format!(
+                                        "Dugum #{}:{} parcacik durumu: {}.",
+                                        e.index(),
+                                        e.generation(),
+                                        if p.is_active { "Aktif" } else { "Durduruldu" }
+                                    ),
+                                });
+                            }
+                            return true;
+                        }
+                    }
+                    cur_insp_y += 76.0 + 8.0;
+                }
+
+                // [+ Add Component] Butonu
+                let add_btn_y = cur_insp_y;
+                if mouse.x >= insp_x + 8.0
+                    && mouse.x <= insp_x + right_w - 8.0
+                    && mouse.y >= add_btn_y
+                    && mouse.y <= add_btn_y + 24.0
+                {
+                    app.editor.show_add_component_popup = !app.editor.show_add_component_popup;
+                    return true;
+                }
+
+                // Acilir Popup Menusu Tiklamalari
+                if app.editor.show_add_component_popup {
+                    let pop_y = add_btn_y + 28.0;
+                    if mouse.x >= insp_x + 8.0 && mouse.x <= insp_x + right_w - 8.0 {
+                        if mouse.y >= pop_y + 4.0 && mouse.y <= pop_y + 24.0 {
+                            app.registry.emplace(
+                                e,
+                                Collider2D {
+                                    is_dynamic: true,
+                                    is_sensor: false,
+                                },
+                            );
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin Collider2D eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            app.editor.show_add_component_popup = false;
+                            app.audio.play("sfx_blip");
+                            return true;
+                        } else if mouse.y >= pop_y + 26.0 && mouse.y <= pop_y + 46.0 {
+                            app.registry.emplace(
+                                e,
+                                Velocity2D {
+                                    vel: Vec2::new(50.0, 50.0),
+                                },
+                            );
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin Velocity2D eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            app.editor.show_add_component_popup = false;
+                            app.audio.play("sfx_blip");
+                            return true;
+                        } else if mouse.y >= pop_y + 48.0 && mouse.y <= pop_y + 68.0 {
+                            app.registry.emplace(e, ScriptComponent::new_rotator(2.0));
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin ScriptComponent (Rotator) eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            app.editor.show_add_component_popup = false;
+                            app.audio.play("sfx_blip");
+                            return true;
+                        } else if mouse.y >= pop_y + 70.0 && mouse.y <= pop_y + 90.0 {
+                            app.registry.emplace(
+                                e,
+                                Text2DComponent {
+                                    text: format!("Label_{}", e.index()),
+                                    scale: 1.4,
+                                    color: [240, 240, 240, 255],
+                                },
+                            );
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin Text2DComponent eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            app.editor.show_add_component_popup = false;
+                            app.audio.play("sfx_blip");
+                            return true;
+                        } else if mouse.y >= pop_y + 92.0 && mouse.y <= pop_y + 112.0 {
+                            let clip = AnimationClip::new(
+                                "idle",
+                                vec!["player_ship".to_string(), "energy_orb".to_string()],
+                                4.0,
+                                true,
+                            );
+                            app.registry
+                                .emplace(e, Animation2DComponent::new().with_clip(clip));
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin Animation2DComponent eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            app.editor.show_add_component_popup = false;
+                            app.audio.play("sfx_blip");
+                            return true;
+                        } else if mouse.y >= pop_y + 114.0 && mouse.y <= pop_y + 134.0 {
+                            app.registry.emplace(e, Tilemap2DComponent::new(32.0));
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin Tilemap2DComponent eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            app.editor.show_add_component_popup = false;
+                            app.audio.play("sfx_blip");
+                            return true;
+                        } else if mouse.y >= pop_y + 136.0 && mouse.y <= pop_y + 156.0 {
+                            let pos = app
+                                .registry
+                                .get::<Transform2D>(e)
+                                .map(|t| t.pos)
+                                .unwrap_or(Vec2::ZERO);
+                            app.registry
+                                .emplace(e, ParticleEmitterComponent::new_explosion(64, pos));
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin ParticleEmitterComponent (Patlama) eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            app.editor.show_add_component_popup = false;
+                            app.audio.play("sfx_blip");
+                            return true;
+                        } else if mouse.y >= pop_y + 158.0 && mouse.y <= pop_y + 178.0 {
+                            app.registry.emplace(e, ZIndex2D::new(1));
+                            app.editor.logs.push(LogMessage {
+                                level: "INFO",
+                                text: format!(
+                                    "Dugum #{}:{} icin ZIndex2D (Katman 1) eklendi.",
+                                    e.index(),
+                                    e.generation()
+                                ),
+                            });
+                            app.editor.show_add_component_popup = false;
+                            app.audio.play("sfx_blip");
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 }

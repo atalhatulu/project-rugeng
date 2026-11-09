@@ -687,3 +687,156 @@ impl App {
         }
     }
 }
+
+impl crate::ui::Panel for crate::ui::TopBarPanel {
+    fn handle_click(
+        &mut self,
+        app: &mut App,
+        mouse: Vec2,
+        layout: &DockLayout,
+        _double_click: bool,
+    ) -> bool {
+        let menu_h = layout.menu_h;
+        let screen_w = layout.screen_w;
+        if mouse.y > menu_h {
+            return false;
+        }
+
+        // Oynatma Butonları (Play, Pause, Stop, Step)
+        let play_x = screen_w - 140.0;
+        // Play (Oynat - ▶)
+        if mouse.x >= play_x && mouse.x <= play_x + 26.0 {
+            if !app.editor.is_playing {
+                app.start_simulation();
+                app.editor.logs.push(LogMessage {
+                    level: "INFO",
+                    text: "Oyun baslatildi (Simulasyon aktif).".to_string(),
+                });
+            }
+            return true;
+        }
+        // Pause (Duraklat - ⏸)
+        if mouse.x >= play_x + 28.0 && mouse.x <= play_x + 54.0 {
+            if app.editor.is_playing {
+                app.editor.is_playing = false;
+                app.editor.logs.push(LogMessage {
+                    level: "INFO",
+                    text: "Oyun duraklatildi.".to_string(),
+                });
+            }
+            return true;
+        }
+        // Stop (Durdur - ⏹)
+        if mouse.x >= play_x + 56.0 && mouse.x <= play_x + 82.0 {
+            app.stop_simulation();
+            app.editor.logs.push(LogMessage {
+                level: "INFO",
+                text: "Oyun durduruldu (Sahne ilk haline donduruldu).".to_string(),
+            });
+            return true;
+        }
+        // Step (Adım İlerlet - ⏭)
+        if mouse.x >= play_x + 84.0 && mouse.x <= play_x + 110.0 {
+            if app.editor.scene_snapshot.is_empty()
+                && app.editor.scene_snapshot_3d.is_empty()
+                && app.editor.scene_snapshot_anim_3d.is_empty()
+            {
+                app.registry.view1_ref::<Transform2D, _>(|e, t| {
+                    app.editor.scene_snapshot.push((e, *t));
+                });
+                app.registry.view1_ref::<Transform3D, _>(|e, t| {
+                    app.editor.scene_snapshot_3d.push((e, *t));
+                });
+                app.registry
+                    .view1_ref::<rugeng_core::Animation3DComponent, _>(|e, a| {
+                        app.editor.scene_snapshot_anim_3d.push((e, a.clone()));
+                    });
+            }
+            app.step_simulation_single_frame(1.0 / 60.0);
+            app.editor.logs.push(LogMessage {
+                level: "INFO",
+                text: "1 kare adim ilerletildi (1/60s).".to_string(),
+            });
+            return true;
+        }
+
+        // Hızlı Butonlar ([PAKETLE], [DISA AKTAR], [KAYDET], [SARSINTI])
+        let pak_btn_x = play_x - 310.0;
+        if mouse.x >= pak_btn_x && mouse.x <= pak_btn_x + 76.0 {
+            let pak_target = "dist/game.pak";
+            if let Err(e) = app.export_project_pak(pak_target) {
+                app.editor.logs.push(LogMessage {
+                    level: "ERROR",
+                    text: format!("Paketleme basarisiz: {e}"),
+                });
+            }
+            return true;
+        }
+
+        let export_btn_x = play_x - 228.0;
+        if mouse.x >= export_btn_x && mouse.x <= export_btn_x + 74.0 {
+            let pak_target = "dist/game.pak";
+            let _ = app.export_project_pak(pak_target);
+            app.editor.logs.push(LogMessage {
+                level: "INFO",
+                text: "Tek tikla disa aktarim tamamlandi (Standalone paket hazir).".to_string(),
+            });
+            return true;
+        }
+
+        let save_btn_x = play_x - 148.0;
+        if mouse.x >= save_btn_x && mouse.x <= save_btn_x + 68.0 {
+            let path = app.editor.current_scene_path.clone();
+            app.save_current_scene(&path);
+            return true;
+        }
+
+        let shake_btn_x = play_x - 76.0;
+        if mouse.x >= shake_btn_x && mouse.x <= shake_btn_x + 72.0 {
+            app.trigger_shake_and_explosion();
+            return true;
+        }
+
+        // Açılır Menü Başlıkları (Scene, Edit, Add, Project, Debug, Help)
+        let menu_headers = [
+            ("Scene", 34.0, 54.0, OpenMenu::Scene),
+            ("Edit", 90.0, 50.0, OpenMenu::Edit),
+            ("Add", 142.0, 50.0, OpenMenu::Add),
+            ("Project", 196.0, 64.0, OpenMenu::Project),
+            ("Debug", 266.0, 56.0, OpenMenu::Debug),
+            ("Help", 326.0, 50.0, OpenMenu::Help),
+        ];
+
+        for (_name, x, w, m) in menu_headers {
+            if mouse.x >= x && mouse.x <= x + w {
+                if app.editor.active_menu == Some(m) {
+                    app.editor.active_menu = None;
+                } else {
+                    app.editor.active_menu = Some(m);
+                    app.audio.play("sfx_blip");
+                }
+                return true;
+            }
+        }
+
+        // Çalışma Alanı Seçicileri
+        let mut ws_x = screen_w * 0.5 - 180.0;
+        let modes = [
+            ("2D", WorkspaceMode::TwoD),
+            ("3D", WorkspaceMode::ThreeD),
+            ("Script", WorkspaceMode::Script),
+            ("Game", WorkspaceMode::Game),
+            ("Asset Store", WorkspaceMode::AssetStore),
+        ];
+        for (lbl, mode) in modes {
+            let tab_w = (lbl.len() as f32) * 8.0 + 20.0;
+            if mouse.x >= ws_x && mouse.x <= ws_x + tab_w {
+                app.editor.workspace = mode;
+                return true;
+            }
+            ws_x += tab_w + 6.0;
+        }
+
+        false
+    }
+}

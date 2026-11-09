@@ -688,6 +688,63 @@ impl App {
                 "[2D]"
             };
             font::draw_text(instances, badge, left_w - 38.0, row_y + 4.0, 1.1, icon_col);
+
+            // Sürükle-bırak hedef göstergesi (Drag & Drop visual indicator)
+            if let DragMode::SceneTreeDrag {
+                dragged_entity,
+                drop_target,
+                drop_zone,
+            } = self.editor.drag_mode
+            {
+                if drop_target == Some(e) && dragged_entity != e {
+                    match drop_zone {
+                        TreeDropZone::Before => {
+                            instances.push(QuadInstance::new(
+                                [8.0 + indent, row_y - 1.0],
+                                [item_w, 2.0],
+                                godot_blue,
+                                0,
+                            ));
+                        }
+                        TreeDropZone::After => {
+                            instances.push(QuadInstance::new(
+                                [8.0 + indent, row_y + 20.0 - 1.0],
+                                [item_w, 2.0],
+                                godot_blue,
+                                0,
+                            ));
+                        }
+                        TreeDropZone::Into => {
+                            // Hedef kutu vurgusu
+                            instances.push(QuadInstance::new(
+                                [8.0 + indent, row_y],
+                                [item_w, 1.5],
+                                godot_yellow,
+                                0,
+                            ));
+                            instances.push(QuadInstance::new(
+                                [8.0 + indent, row_y + 18.5],
+                                [item_w, 1.5],
+                                godot_yellow,
+                                0,
+                            ));
+                            instances.push(QuadInstance::new(
+                                [8.0 + indent, row_y],
+                                [1.5, 20.0],
+                                godot_yellow,
+                                0,
+                            ));
+                            instances.push(QuadInstance::new(
+                                [8.0 + indent + item_w - 1.5, row_y],
+                                [1.5, 20.0],
+                                godot_yellow,
+                                0,
+                            ));
+                        }
+                    }
+                }
+            }
+
             row_y += 24.0;
         }
 
@@ -1156,5 +1213,382 @@ impl App {
                 it_y += 24.0;
             }
         }
+    }
+}
+
+impl crate::ui::Panel for crate::ui::SceneTreePanel {
+    fn handle_click(
+        &mut self,
+        app: &mut App,
+        mouse: Vec2,
+        layout: &DockLayout,
+        double_click: bool,
+    ) -> bool {
+        use std::path::PathBuf;
+
+        let screen_h = layout.screen_h;
+        let menu_h = layout.menu_h;
+        let left_w = layout.left_w;
+        let left_bot_y = layout.left_bot_y;
+
+        // 2. SOL SUTUN — UST PANEL (SAHNE HIYERARSISI)
+        if mouse.x <= left_w && mouse.y > menu_h && mouse.y < left_bot_y {
+            // Sekmeler (Scene vs Import)
+            if mouse.y <= menu_h + 24.0 {
+                if mouse.x <= 80.0 {
+                    app.editor.left_tab = LeftTab::Scene;
+                } else if mouse.x <= 162.0 {
+                    app.editor.left_tab = LeftTab::Import;
+                }
+                return true;
+            }
+
+            // [+] Dugum Ekle Butonu -> Node Library Dialog Ac
+            let filter_y = menu_h + 26.0;
+            if mouse.y >= filter_y
+                && mouse.y <= filter_y + 20.0
+                && mouse.x >= 6.0
+                && mouse.x <= 30.0
+            {
+                app.editor.show_node_library_dialog = true;
+                app.audio.play("sfx_blip");
+                return true;
+            }
+
+            let root_y = filter_y + 26.0;
+            let b1_y = root_y + 16.0;
+            let b2_y = b1_y + 24.0;
+            let b3_y = b2_y + 24.0;
+            let b4_y = b3_y + 24.0;
+            let b5_y = b4_y + 24.0;
+            let act_bar_y = b5_y + 24.0;
+
+            let is_3d_ws = app.editor.workspace == WorkspaceMode::ThreeD;
+
+            if is_3d_ws {
+                // 3D Satir 1: [+ Kup 3D] ve [+ Kure 3D]
+                if mouse.y >= b1_y && mouse.y <= b1_y + 20.0 {
+                    if mouse.x >= 8.0 && mouse.x <= 126.0 {
+                        app.spawn_preset_entity("cube_3d");
+                        return true;
+                    } else if mouse.x >= 132.0 && mouse.x <= 252.0 {
+                        app.spawn_preset_entity("sphere_3d");
+                        return true;
+                    }
+                }
+                // 3D Satir 2: [+ Silindir] ve [+ Koni]
+                if mouse.y >= b2_y && mouse.y <= b2_y + 20.0 {
+                    if mouse.x >= 8.0 && mouse.x <= 126.0 {
+                        app.spawn_preset_entity("cylinder_3d");
+                        return true;
+                    } else if mouse.x >= 132.0 && mouse.x <= 252.0 {
+                        app.spawn_preset_entity("cone_3d");
+                        return true;
+                    }
+                }
+                // 3D Satir 3: [+ Piramit] ve [+ Kapsul]
+                if mouse.y >= b3_y && mouse.y <= b3_y + 20.0 {
+                    if mouse.x >= 8.0 && mouse.x <= 126.0 {
+                        app.spawn_preset_entity("pyramid_3d");
+                        return true;
+                    } else if mouse.x >= 132.0 && mouse.x <= 252.0 {
+                        app.spawn_preset_entity("capsule_3d");
+                        return true;
+                    }
+                }
+                // 3D Satir 4: [+ Duzlem] ve [+ Sprite3D]
+                if mouse.y >= b4_y && mouse.y <= b4_y + 20.0 {
+                    if mouse.x >= 8.0 && mouse.x <= 126.0 {
+                        app.spawn_preset_entity("plane_3d");
+                        return true;
+                    } else if mouse.x >= 132.0 && mouse.x <= 252.0 {
+                        app.spawn_preset_entity("sprite_3d");
+                        return true;
+                    }
+                }
+                // 3D Satir 5: [+ Directional Light 3D]
+                if mouse.y >= b5_y
+                    && mouse.y <= b5_y + 20.0
+                    && mouse.x >= 8.0
+                    && mouse.x <= left_w - 8.0
+                {
+                    app.editor.logs.push(LogMessage {
+                        level: "INFO",
+                        text: "Directional Sun Isik kaynagi guncellendi.".to_string(),
+                    });
+                    app.audio.play("sfx_blip");
+                    return true;
+                }
+            } else {
+                // 2D Satir 1: [+ Gemi] ve [+ Bocek]
+                if mouse.y >= b1_y && mouse.y <= b1_y + 20.0 {
+                    if mouse.x >= 8.0 && mouse.x <= 126.0 {
+                        app.spawn_preset_entity("ship");
+                        return true;
+                    } else if mouse.x >= 132.0 && mouse.x <= 252.0 {
+                        app.spawn_preset_entity("enemy");
+                        return true;
+                    }
+                }
+                // 2D Satir 2: [+ Kure] ve [+ Kalp]
+                if mouse.y >= b2_y && mouse.y <= b2_y + 20.0 {
+                    if mouse.x >= 8.0 && mouse.x <= 126.0 {
+                        app.spawn_preset_entity("orb");
+                        return true;
+                    } else if mouse.x >= 132.0 && mouse.x <= 252.0 {
+                        app.spawn_preset_entity("heart");
+                        return true;
+                    }
+                }
+                // 2D Satir 3: [+ Bos 2D]
+                if mouse.y >= b3_y
+                    && mouse.y <= b3_y + 20.0
+                    && mouse.x >= 8.0
+                    && mouse.x <= left_w - 8.0
+                {
+                    app.spawn_preset_entity("empty");
+                    return true;
+                }
+                // 2D Satir 4: [+ Anim Gemi] ve [+ Harita]
+                if mouse.y >= b4_y && mouse.y <= b4_y + 20.0 {
+                    if mouse.x >= 8.0 && mouse.x <= 126.0 {
+                        app.spawn_preset_entity("anim_player");
+                        return true;
+                    } else if mouse.x >= 132.0 && mouse.x <= 252.0 {
+                        app.spawn_preset_entity("tilemap");
+                        return true;
+                    }
+                }
+                // 2D Satir 5: [+ Metin 2D]
+                if mouse.y >= b5_y
+                    && mouse.y <= b5_y + 20.0
+                    && mouse.x >= 8.0
+                    && mouse.x <= left_w - 8.0
+                {
+                    app.spawn_preset_entity("text");
+                    return true;
+                }
+            }
+            // Secili Dugum Eylemleri: [KOPYALA] [SIL] [YENI SAHNE]
+            if mouse.y >= act_bar_y && mouse.y <= act_bar_y + 20.0 {
+                if mouse.x >= 8.0 && mouse.x <= 82.0 {
+                    app.duplicate_selected_entity();
+                    return true;
+                } else if mouse.x >= 86.0 && mouse.x <= 160.0 {
+                    app.delete_selected_entity();
+                    return true;
+                } else if mouse.x >= 164.0 && mouse.x <= 252.0 {
+                    app.new_scene();
+                    return true;
+                }
+            }
+
+            // Dugumlere Tiklama (Varlik Secimi)
+            let mut row_y = act_bar_y + 26.0;
+            let mut clicked_e = None;
+            let mut entity_list = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            app.registry.view1_ref::<Transform2D, _>(|e, _| {
+                if seen.insert(e) {
+                    entity_list.push(e);
+                }
+            });
+            app.registry.view1_ref::<Transform3D, _>(|e, _| {
+                if seen.insert(e) {
+                    entity_list.push(e);
+                }
+            });
+            for e in entity_list {
+                if mouse.y >= row_y && mouse.y <= row_y + 20.0 {
+                    clicked_e = Some(e);
+                    break;
+                }
+                row_y += 24.0;
+            }
+            if let Some(e) = clicked_e {
+                let was_renaming_same = app
+                    .editor
+                    .renaming
+                    .as_ref()
+                    .map(|r| r.entity == e)
+                    .unwrap_or(false);
+
+                if was_renaming_same && !double_click {
+                    let has_parent = app.registry.has::<Parent>(e);
+                    let indent = if has_parent { 14.0 } else { 0.0 };
+                    let text_start_x = 28.0 + indent;
+                    let local_x = mouse.x - text_start_x;
+                    if let Some(r) = app.editor.renaming.as_mut() {
+                        r.set_caret_from_click_x(local_x, 1.2);
+                    }
+                    return true;
+                }
+
+                app.editor.selected_entity = Some(e);
+                if double_click {
+                    app.start_rename();
+                } else if app
+                    .editor
+                    .renaming
+                    .as_ref()
+                    .map(|r| r.entity != e)
+                    .unwrap_or(false)
+                {
+                    app.commit_rename();
+                } else {
+                    app.editor.drag_mode = DragMode::SceneTreeDrag {
+                        dragged_entity: e,
+                        drop_target: None,
+                        drop_zone: TreeDropZone::Into,
+                    };
+                }
+                app.editor.logs.push(LogMessage {
+                    level: "INFO",
+                    text: format!("Dugum #{}:{} secildi.", e.index(), e.generation()),
+                });
+                return true;
+            }
+        }
+
+        // 3. SOL SUTUN — ALT PANEL (DOSYA SISTEMI)
+        if mouse.x <= left_w && mouse.y >= left_bot_y {
+            // Baslik Aksiyon Butonlari: [+ Klasor] ve [+ Sahne]
+            if mouse.y >= left_bot_y + 4.0 && mouse.y <= left_bot_y + 22.0 {
+                let btn_klasor_x = left_w - 146.0;
+                let btn_sahne_x = left_w - 72.0;
+
+                // [+ Klasor]
+                if mouse.x >= btn_klasor_x && mouse.x <= btn_klasor_x + 68.0 {
+                    app.editor.scene_counter += 1;
+                    let folder_name = format!("yeni_klasor_{}", app.editor.scene_counter);
+                    let target_dir = app.editor.current_path.join(&folder_name);
+                    if let Err(e) = std::fs::create_dir_all(&target_dir) {
+                        app.editor.logs.push(LogMessage {
+                            level: "ERROR",
+                            text: format!("Klasor olusturulamadi: {e}"),
+                        });
+                    } else {
+                        app.editor.refresh_files();
+                        app.audio.play("sfx_powerup");
+                        app.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: format!(
+                                "Yeni klasor olusturuldu: res://{}",
+                                target_dir.display()
+                            ),
+                        });
+                    }
+                    return true;
+                }
+
+                // [+ Sahne]
+                if mouse.x >= btn_sahne_x && mouse.x <= btn_sahne_x + 66.0 {
+                    app.editor.scene_counter += 1;
+                    let scene_name = format!("yeni_sahne_{}.scene", app.editor.scene_counter);
+                    let target_scene = app.editor.current_path.join(&scene_name);
+                    let empty_scene = rugeng_core::SceneData::new(&scene_name);
+                    let versioned = rugeng_assets::VersionedScene::from_core_scene(&empty_scene);
+                    if let Ok(json) = versioned.to_json() {
+                        let _ = std::fs::write(&target_scene, json);
+                        app.editor.refresh_files();
+                        app.audio.play("sfx_powerup");
+                        app.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: format!(
+                                "Yeni sahne dosyasi olusturuldu: res://{}",
+                                target_scene.display()
+                            ),
+                        });
+                    }
+                    return true;
+                }
+            }
+
+            let fs_bar_y = left_bot_y + 28.0;
+            // '<' Geri Butonu
+            if mouse.y >= fs_bar_y
+                && mouse.y <= fs_bar_y + 20.0
+                && mouse.x >= 6.0
+                && mouse.x <= 28.0
+            {
+                if app.editor.current_path.as_os_str() != "." {
+                    app.editor.current_path.pop();
+                    if app.editor.current_path.as_os_str().is_empty() {
+                        app.editor.current_path = PathBuf::from(".");
+                    }
+                    app.editor.refresh_files();
+                    app.editor.logs.push(LogMessage {
+                        level: "INFO",
+                        text: format!("Dizin: res://{}", app.editor.current_path.display()),
+                    });
+                }
+                return true;
+            }
+
+            let fs_filter_y = fs_bar_y + 24.0;
+            let tree_y = fs_filter_y + 26.0;
+            let mut f_y = tree_y + 4.0;
+
+            // [..] Ust Dizin Butonuna Tiklama
+            if app.editor.current_path.as_os_str() != "." {
+                if mouse.y >= f_y - 2.0 && mouse.y <= f_y + 18.0 {
+                    app.editor.current_path.pop();
+                    if app.editor.current_path.as_os_str().is_empty() {
+                        app.editor.current_path = PathBuf::from(".");
+                    }
+                    app.editor.refresh_files();
+                    app.editor.logs.push(LogMessage {
+                        level: "INFO",
+                        text: format!("Dizin: res://{}", app.editor.current_path.display()),
+                    });
+                    return true;
+                }
+                f_y += 20.0;
+            }
+
+            // Dosya veya Klasor Satirina Tiklama
+            let mut clicked_item = None;
+            for item in &app.editor.files_in_dir {
+                if f_y + 18.0 > screen_h - 4.0 {
+                    break;
+                }
+                if mouse.y >= f_y - 2.0 && mouse.y <= f_y + 18.0 {
+                    clicked_item = Some(item.clone());
+                    break;
+                }
+                f_y += 20.0;
+            }
+
+            if let Some(item) = clicked_item {
+                if item.is_dir {
+                    app.editor.current_path.push(&item.name);
+                    app.editor.refresh_files();
+                    app.editor.logs.push(LogMessage {
+                        level: "INFO",
+                        text: format!(
+                            "Klasore girildi: res://{}",
+                            app.editor.current_path.display()
+                        ),
+                    });
+                } else {
+                    app.editor.selected_file = item.name.clone();
+                    if item.name.ends_with(".scene") {
+                        let path = app.editor.current_path.join(&item.name);
+                        app.load_scene_from_file(&path.to_string_lossy());
+                    } else if item.name.ends_with(".prefab") {
+                        let path = app.editor.current_path.join(&item.name);
+                        let _ = app.load_prefab_to_scene(&path.to_string_lossy());
+                    } else {
+                        app.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: format!("Dosya secildi: {}", item.name),
+                        });
+                    }
+                }
+                return true;
+            }
+        }
+
+        false
     }
 }

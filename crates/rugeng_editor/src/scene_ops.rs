@@ -1519,6 +1519,194 @@ impl App {
         }
     }
 
+    /// Sayısal alan düzenlemesini parse edip bileşene uygular ve Undo kaydı oluşturur
+    pub(crate) fn commit_numeric_edit(&mut self) {
+        let Some(mut ne) = self.editor.numeric_edit.take() else {
+            return;
+        };
+
+        let parsed_val = match ne.parse_value() {
+            Ok(v) => v,
+            Err(_) => {
+                ne.is_invalid = true;
+                self.editor.numeric_edit = Some(ne);
+                self.editor.logs.push(LogMessage {
+                    level: "WARN",
+                    text: "Gecersiz sayisal deger girdisi! Sayi formatini kontrol edin."
+                        .to_string(),
+                });
+                return;
+            }
+        };
+
+        let e = ne.entity;
+        if !self.registry.is_alive(e) {
+            return;
+        }
+
+        match ne.field {
+            NumericFieldId::PosX => {
+                let old_t = self.registry.get::<Transform2D>(e).copied();
+                if let Some(t) = self.registry.get_mut::<Transform2D>(e) {
+                    t.pos.x = parsed_val;
+                }
+                if let Some(old_t) = old_t {
+                    self.push_transform2d_undo(e, old_t);
+                }
+            }
+            NumericFieldId::PosY => {
+                let old_t = self.registry.get::<Transform2D>(e).copied();
+                if let Some(t) = self.registry.get_mut::<Transform2D>(e) {
+                    t.pos.y = parsed_val;
+                }
+                if let Some(old_t) = old_t {
+                    self.push_transform2d_undo(e, old_t);
+                }
+            }
+            NumericFieldId::Rot => {
+                let old_t = self.registry.get::<Transform2D>(e).copied();
+                if let Some(t) = self.registry.get_mut::<Transform2D>(e) {
+                    t.rotation = parsed_val.to_radians();
+                }
+                if let Some(old_t) = old_t {
+                    self.push_transform2d_undo(e, old_t);
+                }
+            }
+            NumericFieldId::SizeX => {
+                let old_t = self.registry.get::<Transform2D>(e).copied();
+                if let Some(t) = self.registry.get_mut::<Transform2D>(e) {
+                    t.size.x = parsed_val.max(1.0);
+                }
+                if let Some(old_t) = old_t {
+                    self.push_transform2d_undo(e, old_t);
+                }
+            }
+            NumericFieldId::SizeY => {
+                let old_t = self.registry.get::<Transform2D>(e).copied();
+                if let Some(t) = self.registry.get_mut::<Transform2D>(e) {
+                    t.size.y = parsed_val.max(1.0);
+                }
+                if let Some(old_t) = old_t {
+                    self.push_transform2d_undo(e, old_t);
+                }
+            }
+            NumericFieldId::Pos3X => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    t3.translation.x = parsed_val;
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+            NumericFieldId::Pos3Y => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    t3.translation.y = parsed_val;
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+            NumericFieldId::Pos3Z => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    t3.translation.z = parsed_val;
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+            NumericFieldId::Rot3Pitch => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    let (_, yaw, roll) = t3.rotation.to_euler(glam::EulerRot::YXZ);
+                    t3.rotation = glam::Quat::from_euler(
+                        glam::EulerRot::YXZ,
+                        parsed_val.to_radians(),
+                        yaw,
+                        roll,
+                    );
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+            NumericFieldId::Rot3Yaw => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    let (pitch, _, roll) = t3.rotation.to_euler(glam::EulerRot::YXZ);
+                    t3.rotation = glam::Quat::from_euler(
+                        glam::EulerRot::YXZ,
+                        pitch,
+                        parsed_val.to_radians(),
+                        roll,
+                    );
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+            NumericFieldId::Rot3Roll => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    let (pitch, yaw, _) = t3.rotation.to_euler(glam::EulerRot::YXZ);
+                    t3.rotation = glam::Quat::from_euler(
+                        glam::EulerRot::YXZ,
+                        pitch,
+                        yaw,
+                        parsed_val.to_radians(),
+                    );
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+            NumericFieldId::Scale3X => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    t3.scale.x = parsed_val.max(0.001);
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+            NumericFieldId::Scale3Y => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    t3.scale.y = parsed_val.max(0.001);
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+            NumericFieldId::Scale3Z => {
+                let old_t3 = self.registry.get::<Transform3D>(e).copied();
+                if let Some(t3) = self.registry.get_mut::<Transform3D>(e) {
+                    t3.scale.z = parsed_val.max(0.001);
+                }
+                if let Some(old_t3) = old_t3 {
+                    self.push_transform3d_undo(e, old_t3);
+                }
+            }
+        }
+
+        self.audio.play("sfx_blip");
+        self.editor.logs.push(LogMessage {
+            level: "INFO",
+            text: format!("Deger uygulandi: {:.2}", parsed_val),
+        });
+    }
+
+    pub(crate) fn cancel_numeric_edit(&mut self) {
+        if self.editor.numeric_edit.take().is_some() {
+            self.editor.logs.push(LogMessage {
+                level: "INFO",
+                text: "Sayisal giris iptal edildi.".to_string(),
+            });
+        }
+    }
+
     /// NodeName'i ad (Option<String>) değerinden geri yükle. `apply_option_comp`
     /// tip bazlı çalıştığı için String != NodeName; ayrı kol gerekir.
     fn apply_node_name(&mut self, e: Entity, v: Option<String>) {
@@ -1695,6 +1883,26 @@ impl App {
                         .redo_stack
                         .push(UndoAction::NodeNameChanged { entity, old, new });
                 }
+                UndoAction::Reparent {
+                    entity,
+                    old_parent,
+                    new_parent,
+                } => {
+                    self.apply_reparent(entity, old_parent);
+                    self.editor.is_scene_dirty = true;
+                    self.editor.redo_stack.push(UndoAction::Reparent {
+                        entity,
+                        old_parent,
+                        new_parent,
+                    });
+                    self.editor.logs.push(LogMessage {
+                        level: "INFO",
+                        text: format!(
+                            "Geri Alindi (Undo): Dugum #{} ebeveynligi geri alindi.",
+                            entity.index()
+                        ),
+                    });
+                }
             }
             self.audio.play("sfx_blip");
         }
@@ -1849,9 +2057,75 @@ impl App {
                         .undo_stack
                         .push(UndoAction::NodeNameChanged { entity, old, new });
                 }
+                UndoAction::Reparent {
+                    entity,
+                    old_parent,
+                    new_parent,
+                } => {
+                    self.apply_reparent(entity, new_parent);
+                    self.editor.is_scene_dirty = true;
+                    self.editor.undo_stack.push(UndoAction::Reparent {
+                        entity,
+                        old_parent,
+                        new_parent,
+                    });
+                    self.editor.logs.push(LogMessage {
+                        level: "INFO",
+                        text: format!(
+                            "Yinelendi (Redo): Dugum #{} ebeveynligi uygulandi.",
+                            entity.index()
+                        ),
+                    });
+                }
             }
             self.audio.play("sfx_blip");
         }
+    }
+
+    /// Bir varlığın ebeveynlik (Parent / Children) ilişkisini güvenle ayarlar veya kaldırır
+    pub(crate) fn apply_reparent(&mut self, entity: Entity, target_parent: Option<Entity>) {
+        // Döngü koruması: Hedef ebeveyn entity'nin kendisi veya bir alt soyu olamaz
+        if let Some(tp) = target_parent {
+            if tp == entity || self.is_ancestor_of(entity, tp) {
+                self.editor.logs.push(LogMessage {
+                    level: "WARN",
+                    text: "Gecersiz ebeveynlik: Dongusel hiyerarsi engellendi.".to_string(),
+                });
+                return;
+            }
+        }
+
+        // Önce eski ebeveynden çıkar
+        if let Some(old_p) = self.registry.get::<Parent>(entity).map(|p| p.entity) {
+            if let Some(ch) = self.registry.get_mut::<Children>(old_p) {
+                ch.remove(entity);
+            }
+            self.registry.remove::<Parent>(entity);
+        }
+
+        // Yeni ebeveyne ekle
+        if let Some(new_p) = target_parent {
+            self.registry.emplace(entity, Parent { entity: new_p });
+            if let Some(ch) = self.registry.get_mut::<Children>(new_p) {
+                ch.add(entity);
+            } else {
+                let mut ch = Children::new();
+                ch.add(entity);
+                self.registry.emplace(new_p, ch);
+            }
+        }
+    }
+
+    /// `ancestor` varlığının `descendant` varlığının bir atası olup olmadığını kontrol eder
+    pub(crate) fn is_ancestor_of(&self, ancestor: Entity, descendant: Entity) -> bool {
+        let mut curr = descendant;
+        while let Some(parent) = self.registry.get::<Parent>(curr).map(|p| p.entity) {
+            if parent == ancestor {
+                return true;
+            }
+            curr = parent;
+        }
+        false
     }
 
     /// Sahnedeki mevcut Tilemap varlığını bulur veya yoksa yeni bir tane oluşturur.
@@ -2160,5 +2434,41 @@ impl App {
         });
 
         Ok(created_entities)
+    }
+}
+
+#[cfg(test)]
+mod scene_tree_reparent_tests {
+    use crate::App;
+    use rugeng_core::{Children, Parent, Transform2D};
+
+    #[test]
+    fn test_reparent_and_cycle_rejection() {
+        let mut app = App::new();
+        let e1 = app.registry.create();
+        let e2 = app.registry.create();
+        let e3 = app.registry.create();
+
+        app.registry.emplace(e1, Transform2D::default());
+        app.registry.emplace(e2, Transform2D::default());
+        app.registry.emplace(e3, Transform2D::default());
+
+        // e1 -> e2 ebeveyni yap
+        app.apply_reparent(e2, Some(e1));
+        assert_eq!(app.registry.get::<Parent>(e2).map(|p| p.entity), Some(e1));
+        assert!(app.registry.get::<Children>(e1).unwrap().list.contains(&e2));
+
+        // e2 -> e3 ebeveyni yap
+        app.apply_reparent(e3, Some(e2));
+        assert_eq!(app.registry.get::<Parent>(e3).map(|p| p.entity), Some(e2));
+
+        // Döngü denemesi: e1'i e3'ün çocuğu yapmaya çalış (e1 -> e2 -> e3 -> e1)
+        app.apply_reparent(e1, Some(e3));
+        // Döngü reddedilmeli, e1'in ebeveyni olmamalı
+        assert_eq!(app.registry.get::<Parent>(e1).map(|p| p.entity), None);
+
+        // Kendi kendine ebeveynlik reddedilmeli
+        app.apply_reparent(e1, Some(e1));
+        assert_eq!(app.registry.get::<Parent>(e1).map(|p| p.entity), None);
     }
 }

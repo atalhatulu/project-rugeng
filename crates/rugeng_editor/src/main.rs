@@ -73,6 +73,8 @@ pub(crate) struct EditorState {
     pub(crate) redo_stack: Vec<UndoAction>,
     /// F2 satır içi yeniden adlandırma durumu (aktifse düzenleme modu).
     pub(crate) renaming: Option<InlineTextEdit>,
+    /// Denetçi (Inspector) sayısal alan odaklanma ve düzenleme durumu.
+    pub(crate) numeric_edit: Option<InspectorNumericEdit>,
     pub(crate) show_add_component_popup: bool,
     pub(crate) active_menu: Option<OpenMenu>,
     pub(crate) active_tile_type: TileType,
@@ -255,6 +257,7 @@ impl App {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             renaming: None,
+            numeric_edit: None,
             show_add_component_popup: false,
             active_menu: None,
             active_tile_type: TileType::Grass,
@@ -893,7 +896,8 @@ impl ApplicationHandler for App {
                                     DragMode::None => {}
                                     DragMode::SplitterLeft { .. }
                                     | DragMode::SplitterRight { .. }
-                                    | DragMode::SplitterBottom { .. } => {}
+                                    | DragMode::SplitterBottom { .. }
+                                    | DragMode::SceneTreeDrag { .. } => {}
                                 }
                             }
                         }
@@ -926,6 +930,60 @@ impl ApplicationHandler for App {
                                 let new_h = (start_bottom_h + delta_y)
                                     .clamp(80.0, (screen_h * 0.5).max(80.0));
                                 self.editor.dock_bottom_h = new_h;
+                            }
+                            DragMode::SceneTreeDrag {
+                                dragged_entity: _,
+                                ref mut drop_target,
+                                ref mut drop_zone,
+                            } => {
+                                // Sol panel sınırları içindeyse sahne ağacı düğümlerini test et
+                                if m.x < left_w
+                                    && m.y > menu_h
+                                    && m.y < menu_h + (screen_h - menu_h) * 0.52
+                                {
+                                    let filter_y = menu_h + 26.0;
+                                    let root_y = filter_y + 26.0;
+                                    let b5_y = root_y + 16.0 + 24.0 * 4.0;
+                                    let act_bar_y = b5_y + 24.0;
+                                    let mut row_y = act_bar_y + 26.0;
+
+                                    let mut found_target = None;
+                                    let mut found_zone = TreeDropZone::Into;
+
+                                    let mut entity_list = Vec::new();
+                                    let mut seen = std::collections::HashSet::new();
+                                    self.registry.view1_ref::<Transform2D, _>(|e, _| {
+                                        if seen.insert(e) {
+                                            entity_list.push(e);
+                                        }
+                                    });
+                                    self.registry.view1_ref::<Transform3D, _>(|e, _| {
+                                        if seen.insert(e) {
+                                            entity_list.push(e);
+                                        }
+                                    });
+
+                                    for e in entity_list {
+                                        if m.y >= row_y - 4.0 && m.y <= row_y + 24.0 {
+                                            found_target = Some(e);
+                                            let rel_y = m.y - row_y;
+                                            if rel_y < 5.0 {
+                                                found_zone = TreeDropZone::Before;
+                                            } else if rel_y > 15.0 {
+                                                found_zone = TreeDropZone::After;
+                                            } else {
+                                                found_zone = TreeDropZone::Into;
+                                            }
+                                            break;
+                                        }
+                                        row_y += 24.0;
+                                    }
+
+                                    *drop_target = found_target;
+                                    *drop_zone = found_zone;
+                                } else {
+                                    *drop_target = None;
+                                }
                             }
                             _ => {}
                         }
@@ -1364,6 +1422,55 @@ impl ApplicationHandler for App {
                             self.editor.selected_entities = in_box;
                         }
 
+                        // Sahne Ağacı Sürükle-Bırak Yeniden Ebeveynleme (Scene Tree Reparent Drop)
+                        if let DragMode::SceneTreeDrag {
+                            dragged_entity,
+                            drop_target: Some(target),
+                            drop_zone,
+                        } = self.editor.drag_mode
+                        {
+                            if target != dragged_entity {
+                                let new_parent = match drop_zone {
+                                    TreeDropZone::Into => Some(target),
+                                    TreeDropZone::Before | TreeDropZone::After => {
+                                        // Hedefin ebeveyniyle kardeş yap (aynı ebeveyne bağla)
+                                        self.registry.get::<Parent>(target).map(|p| p.entity)
+                                    }
+                                };
+
+                                let old_parent = self
+                                    .registry
+                                    .get::<Parent>(dragged_entity)
+                                    .map(|p| p.entity);
+                                if old_parent != new_parent {
+                                    self.apply_reparent(dragged_entity, new_parent);
+                                    // Eğer döngü engeli vs. nedeniyle işlem iptal edilmediyse UndoAction ekle
+                                    let current_parent = self
+                                        .registry
+                                        .get::<Parent>(dragged_entity)
+                                        .map(|p| p.entity);
+                                    if current_parent == new_parent {
+                                        self.editor.undo_stack.push(UndoAction::Reparent {
+                                            entity: dragged_entity,
+                                            old_parent,
+                                            new_parent,
+                                        });
+                                        self.editor.redo_stack.clear();
+                                        self.editor.is_scene_dirty = true;
+                                        self.editor.logs.push(LogMessage {
+                                            level: "INFO",
+                                            text: format!(
+                                                "Dugum #{} yeniden ebeveynlendi -> {:?}",
+                                                dragged_entity.index(),
+                                                new_parent.map(|p| p.index())
+                                            ),
+                                        });
+                                        self.audio.play("sfx_blip");
+                                    }
+                                }
+                            }
+                        }
+
                         self.editor.drag_mode = DragMode::None;
                     }
                 }
@@ -1382,10 +1489,14 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Ime(winit::event::Ime::Commit(txt)) => {
-                // IBus/IME ile Türkçe karakter girişi (rename modunda).
+                // IBus/IME ile Türkçe karakter girişi (rename veya numeric edit modunda).
                 if let Some(r) = self.editor.renaming.as_mut() {
                     for ch in txt.chars() {
                         r.insert(ch);
+                    }
+                } else if let Some(ne) = self.editor.numeric_edit.as_mut() {
+                    for ch in txt.chars() {
+                        ne.insert(ch);
                     }
                 }
             }
@@ -1400,6 +1511,56 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 let pressed = state == ElementState::Pressed;
+
+                // --- Sayısal alan düzenleme modu (Inspector numeric input) ---
+                if self.editor.numeric_edit.is_some() {
+                    if pressed {
+                        match key {
+                            KeyCode::Enter => {
+                                self.commit_numeric_edit();
+                                if let Some(w) = self.window.as_ref() {
+                                    w.set_ime_allowed(false);
+                                }
+                            }
+                            KeyCode::Escape => {
+                                self.cancel_numeric_edit();
+                                if let Some(w) = self.window.as_ref() {
+                                    w.set_ime_allowed(false);
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if let Some(ne) = self.editor.numeric_edit.as_mut() {
+                                    ne.backspace();
+                                }
+                            }
+                            KeyCode::Delete => {
+                                if let Some(ne) = self.editor.numeric_edit.as_mut() {
+                                    ne.delete_forward();
+                                }
+                            }
+                            KeyCode::ArrowLeft => {
+                                if let Some(ne) = self.editor.numeric_edit.as_mut() {
+                                    ne.move_caret(-1);
+                                }
+                            }
+                            KeyCode::ArrowRight => {
+                                if let Some(ne) = self.editor.numeric_edit.as_mut() {
+                                    ne.move_caret(1);
+                                }
+                            }
+                            _ => {
+                                if let Some(txt) = text.as_ref() {
+                                    for ch in txt.chars() {
+                                        if let Some(ne) = self.editor.numeric_edit.as_mut() {
+                                            ne.insert(ch);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
 
                 // --- Satır içi yeniden adlandırma modu: tüm kısayolları bloklar ---
                 if self.editor.renaming.is_some() {
