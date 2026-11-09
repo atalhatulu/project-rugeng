@@ -1,9 +1,11 @@
+pub mod character_controller;
 pub mod collision_3d;
 pub mod collision_solver;
 pub mod raycast;
 pub mod spatial_hash;
 pub mod spatial_hash_3d;
 
+pub use character_controller::{CharacterController3D, CharacterController3DConfig};
 pub use collision_3d::{
     resolve_aabb3d_collision, resolve_sphere3d_collision, Capsule3D, CollisionManifold3D, OBB3D,
 };

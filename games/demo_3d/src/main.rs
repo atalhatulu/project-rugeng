@@ -20,7 +20,8 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use rugeng_core::{compute_world_transform_3d, BoundingSphere, Frustum, Transform3D, AABB3D};
-use rugeng_render::camera_3d::{AmbientLight, Camera3D, DirectionalLight};
+use rugeng_physics::{CharacterController3D, CharacterController3DConfig};
+use rugeng_render::camera_3d::{AmbientLight, Camera3D, DirectionalLight, OrbitCamera3D};
 use rugeng_render::context::VulkanContext;
 use rugeng_render::depth::DepthBuffer;
 use rugeng_render::font;
@@ -59,9 +60,9 @@ struct App {
 
     objects: Vec<DemoObject>,
     animation_component: Option<rugeng_core::Animation3DComponent>,
+    character: CharacterController3D,
+    orbit_camera: OrbitCamera3D,
     camera: Camera3D,
-    camera_yaw: f32,
-    camera_pitch: f32,
 
     sun: DirectionalLight,
     ambient: AmbientLight,
@@ -73,7 +74,7 @@ struct App {
     fps_timer: Instant,
     auto_exit_frames: Option<u64>,
 
-    // Kamera hareket girdileri
+    // Kamera ve karakter hareket girdileri
     move_forward: bool,
     move_backward: bool,
     move_left: bool,
@@ -201,6 +202,31 @@ impl App {
             is_child: false,
         });
 
+        // 6. Kinematik Karakter Objesi (Player)
+        let player_start_pos = Vec3::new(0.0, 2.0, 5.0);
+        objects.push(DemoObject {
+            transform: Transform3D::new(player_start_pos, Quat::IDENTITY, Vec3::new(0.8, 1.8, 0.8)),
+            rotation_speed: Vec3::ZERO,
+            mesh_idx: 0, // cube / character
+            aabb: AABB3D::from_center_half_extents(Vec3::ZERO, Vec3::new(0.4, 0.9, 0.4)),
+            sphere: BoundingSphere::new(Vec3::ZERO, 1.0),
+            is_child: false,
+        });
+
+        let char_cfg = CharacterController3DConfig {
+            half_extents: Vec3::new(0.4, 0.9, 0.4),
+            gravity: Vec3::new(0.0, -19.62, 0.0),
+            max_speed: 7.0,
+            acceleration: 45.0,
+            friction: 12.0,
+            air_control: 0.35,
+            jump_speed: 8.0,
+            min_ground_normal_y: 0.707,
+            ground_snap_distance: 0.08,
+        };
+        let character = CharacterController3D::new(player_start_pos, char_cfg);
+        let orbit_camera = OrbitCamera3D::new(player_start_pos + Vec3::new(0.0, 1.0, 0.0), 6.0);
+
         Self {
             window: None,
             context: None,
@@ -240,6 +266,8 @@ impl App {
                 let clip = rugeng_core::AnimationClip3D::new("IdleSway", 2.0, vec![channel]);
                 Some(rugeng_core::Animation3DComponent::new(skel, vec![clip]))
             },
+            character,
+            orbit_camera,
             camera: Camera3D::new(
                 Vec3::new(0.0, 3.5, 9.0),
                 Vec3::new(0.0, 1.0, 0.0),
@@ -249,8 +277,6 @@ impl App {
                 0.1,
                 1000.0,
             ),
-            camera_yaw: -std::f32::consts::FRAC_PI_2,
-            camera_pitch: -0.2,
             sun: DirectionalLight::new(Vec3::new(0.8, 1.2, 0.6), [1.0, 0.98, 0.9], 1.2),
             ambient: AmbientLight::new([0.2, 0.22, 0.28], 0.35),
             last_frame_time: Instant::now(),
@@ -275,53 +301,90 @@ impl App {
     }
 
     fn update(&mut self, dt: f32) {
-        // 1. Kamera Rotasyon ve Hareket Güncellemesi
+        // 1. Karakter Kontrolü ve Serbest Yörünge Kamerası (OrbitCamera3D & CharacterController3D)
         let rot_speed = 1.8 * dt;
         if self.turn_left {
-            self.camera_yaw -= rot_speed;
+            self.orbit_camera.yaw -= rot_speed;
         }
         if self.turn_right {
-            self.camera_yaw += rot_speed;
+            self.orbit_camera.yaw += rot_speed;
         }
         if self.turn_up {
-            self.camera_pitch = (self.camera_pitch + rot_speed).clamp(-1.4, 1.4);
+            self.orbit_camera.pitch = (self.orbit_camera.pitch + rot_speed).clamp(-1.4, 1.4);
         }
         if self.turn_down {
-            self.camera_pitch = (self.camera_pitch - rot_speed).clamp(-1.4, 1.4);
+            self.orbit_camera.pitch = (self.orbit_camera.pitch - rot_speed).clamp(-1.4, 1.4);
         }
 
-        let forward = Vec3::new(
-            self.camera_yaw.cos() * self.camera_pitch.cos(),
-            self.camera_pitch.sin(),
-            self.camera_yaw.sin() * self.camera_pitch.cos(),
+        // Kameranın baktığı yatay yöne (yaw) göre hareket vektörü hesaplama
+        let cam_fwd_xz = Vec3::new(
+            self.orbit_camera.yaw.cos(),
+            0.0,
+            self.orbit_camera.yaw.sin(),
         )
         .normalize();
+        let cam_right_xz = cam_fwd_xz.cross(Vec3::Y).normalize();
 
-        let right = forward.cross(Vec3::Y).normalize();
-        let up = right.cross(forward).normalize();
-
-        let move_speed = 8.0 * dt;
+        let mut move_dir = Vec3::ZERO;
         if self.move_forward {
-            self.camera.eye += forward * move_speed;
+            move_dir += cam_fwd_xz;
         }
         if self.move_backward {
-            self.camera.eye -= forward * move_speed;
+            move_dir -= cam_fwd_xz;
         }
         if self.move_left {
-            self.camera.eye -= right * move_speed;
+            move_dir -= cam_right_xz;
         }
         if self.move_right {
-            self.camera.eye += right * move_speed;
+            move_dir += cam_right_xz;
         }
-        if self.move_up {
-            self.camera.eye += Vec3::Y * move_speed;
-        }
-        if self.move_down {
-            self.camera.eye -= Vec3::Y * move_speed;
+        if move_dir.length_squared() > 1e-4 {
+            move_dir = move_dir.normalize();
         }
 
-        self.camera.target = self.camera.eye + forward;
-        self.camera.up = up;
+        // Zıplama
+        if self.move_up {
+            self.character.jump();
+        }
+
+        // Dünyadaki katı engeller (Zemin ve diğer statik nesneler)
+        let mut colliders = Vec::new();
+        // Zemin kutusu: Y = [-2.0, 0.0], X/Z = [-40.0, 40.0]
+        colliders.push(AABB3D::new(
+            Vec3::new(-40.0, -2.0, -40.0),
+            Vec3::new(40.0, 0.0, 40.0),
+        ));
+        // Diğer nesnelerin (merkez küp vs.) AABB'leri
+        for i in 1..self.objects.len() {
+            if i != 6 {
+                // Karakterin kendi gövdesi hariç
+                colliders.push(
+                    self.objects[i]
+                        .aabb
+                        .transform(self.objects[i].transform.local_matrix()),
+                );
+            }
+        }
+
+        // Karakter simülasyon adımı
+        self.character.move_and_slide(move_dir, dt, &colliders);
+
+        // Karakter objesinin görsel transformunu güncelle
+        if self.objects.len() > 6 {
+            self.objects[6].transform.translation = self.character.position;
+            if move_dir.length_squared() > 1e-4 {
+                let target_angle = (-move_dir.x).atan2(-move_dir.z);
+                self.objects[6].transform.rotation = Quat::from_rotation_y(target_angle);
+            }
+        }
+
+        // Orbit kamerasının hedefini karakterin göz hizasına bağla
+        self.orbit_camera.target = self.character.position + Vec3::new(0.0, 1.2, 0.0);
+        self.orbit_camera.spring_arm.update_with_hit(dt, None);
+
+        // Render kamerasını OrbitCamera3D'den güncelle
+        let aspect = self.camera.aspect_ratio;
+        self.camera = self.orbit_camera.to_camera_3d(aspect, 60.0);
 
         // 2. Nesnelerin Rotasyonu
         for obj in &mut self.objects {

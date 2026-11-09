@@ -170,6 +170,147 @@ impl Camera3D {
     }
 }
 
+/// 3. Şahıs SpringArm / Kamera Çarpışma ve Sönümleme Kolu (SpringArm3D)
+#[derive(Clone, Copy, Debug)]
+pub struct SpringArm3D {
+    /// Hedeflenen maksimum kol uzunluğu (mesafe)
+    pub target_length: f32,
+    /// Mevcut sönümlenmiş kol uzunluğu
+    pub current_length: f32,
+    /// Minimum izin verilen kol uzunluğu (karakter içine girmesini önler)
+    pub min_length: f32,
+    /// Sönümleme / yumuşatma hızı (lerp speed)
+    pub smooth_speed: f32,
+    /// Kamera küre yarıçapı (duvar penetrasyonunu önleme toleransı)
+    pub probe_radius: f32,
+}
+
+impl Default for SpringArm3D {
+    fn default() -> Self {
+        Self {
+            target_length: 5.0,
+            current_length: 5.0,
+            min_length: 0.5,
+            smooth_speed: 15.0,
+            probe_radius: 0.2,
+        }
+    }
+}
+
+impl SpringArm3D {
+    pub fn new(target_length: f32, min_length: f32) -> Self {
+        Self {
+            target_length,
+            current_length: target_length,
+            min_length,
+            smooth_speed: 15.0,
+            probe_radius: 0.2,
+        }
+    }
+
+    /// Hedef noktadan (`origin`), verilen bakış yönünün tersine doğru raycast / engel kontrolü yapar.
+    /// Eğer engel bulunursa kol uzunluğunu kırpar ve kamera duvara gömülmez.
+    pub fn update_with_hit(&mut self, dt: f32, hit_distance: Option<f32>) {
+        let desired = match hit_distance {
+            Some(dist) => (dist - self.probe_radius).clamp(self.min_length, self.target_length),
+            None => self.target_length,
+        };
+
+        if dt <= 0.0 {
+            self.current_length = desired;
+            return;
+        }
+
+        // Eğer aniden duvara çarptıysak hemen yakınlaş (anlık geri çekilme),
+        // Duvar bittiğinde ise yumuşakça (lerp) eski mesafeye açıl
+        if desired < self.current_length {
+            self.current_length = desired;
+        } else {
+            let t = (dt * self.smooth_speed).min(1.0);
+            self.current_length = self.current_length + (desired - self.current_length) * t;
+        }
+    }
+}
+
+/// 3. Şahıs Serbest Yörünge Kamerası (OrbitCamera3D)
+#[derive(Clone, Copy, Debug)]
+pub struct OrbitCamera3D {
+    pub target: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub spring_arm: SpringArm3D,
+    pub sensitivity: f32,
+    pub min_pitch: f32,
+    pub max_pitch: f32,
+}
+
+impl Default for OrbitCamera3D {
+    fn default() -> Self {
+        Self {
+            target: Vec3::ZERO,
+            yaw: -std::f32::consts::FRAC_PI_2,
+            pitch: 0.35,
+            spring_arm: SpringArm3D::default(),
+            sensitivity: 0.003,
+            min_pitch: -1.4, // ~ -80 derece
+            max_pitch: 1.4,  // ~ +80 derece
+        }
+    }
+}
+
+impl OrbitCamera3D {
+    pub fn new(target: Vec3, arm_length: f32) -> Self {
+        Self {
+            target,
+            spring_arm: SpringArm3D::new(arm_length, 0.5),
+            ..Default::default()
+        }
+    }
+
+    /// Fare hareketiyle yaw ve pitch açılarını günceller.
+    pub fn handle_mouse_delta(&mut self, dx: f32, dy: f32) {
+        self.yaw += dx * self.sensitivity;
+        self.pitch = (self.pitch - dy * self.sensitivity).clamp(self.min_pitch, self.max_pitch);
+    }
+
+    /// Kameranın ileri bakış yön vektörünü hesaplar (target -> eye'ın baktığı yön).
+    #[inline]
+    pub fn forward(&self) -> Vec3 {
+        let cos_pitch = self.pitch.cos();
+        Vec3::new(
+            cos_pitch * self.yaw.cos(),
+            self.pitch.sin(),
+            cos_pitch * self.yaw.sin(),
+        )
+        .normalize()
+    }
+
+    /// Kameranın sağ vektörü
+    #[inline]
+    pub fn right(&self) -> Vec3 {
+        self.forward().cross(Vec3::Y).normalize()
+    }
+
+    /// Kameranın dünya konumunu hesaplar (target - forward * arm_length).
+    #[inline]
+    pub fn eye_position(&self) -> Vec3 {
+        self.target - self.forward() * self.spring_arm.current_length
+    }
+
+    /// Render için `Camera3D` nesnesi üretir.
+    pub fn to_camera_3d(&self, aspect_ratio: f32, fov_degrees: f32) -> Camera3D {
+        Camera3D::new(
+            self.eye_position(),
+            self.target,
+            Vec3::Y,
+            fov_degrees.to_radians(),
+            aspect_ratio,
+            0.1,
+            1000.0,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +349,37 @@ mod tests {
         assert!((c_in_light.x).abs() < 1e-4);
         assert!((c_in_light.y).abs() < 1e-4);
         assert!(c_in_light.z < 0.0);
+    }
+
+    #[test]
+    fn test_spring_arm_camera_collision_clamping() {
+        let mut arm = SpringArm3D::new(5.0, 0.5);
+        assert_eq!(arm.current_length, 5.0);
+
+        // 1. Engel yokken hedef mesafede kalmalı
+        arm.update_with_hit(0.1, None);
+        assert!((arm.current_length - 5.0).abs() < 1e-4);
+
+        // 2. 2.0 metre mesafede bir duvar tespit edildiğinde probe_radius (0.2) çıkarılarak anında 1.8m'ye kenetlenmeli
+        arm.update_with_hit(0.016, Some(2.0));
+        assert!(
+            (arm.current_length - 1.8).abs() < 1e-4,
+            "Engel tespitinde yay kolu aninda kisalmali, len: {}",
+            arm.current_length
+        );
+
+        // 3. Çok yakın bir duvarda min_length (0.5m) altına düşmemeli
+        arm.update_with_hit(0.016, Some(0.3));
+        assert!(
+            (arm.current_length - 0.5).abs() < 1e-4,
+            "Kol uzunlugu min_length (0.5) altina inmemeli"
+        );
+
+        // 4. Engel kalktığında eski 5.0m mesafesine yumuşakça (lerp) geri açılmalı
+        arm.update_with_hit(0.1, None);
+        assert!(
+            arm.current_length > 0.5 && arm.current_length <= 5.0,
+            "Engel kalkinca mesafe artmaya baslamali"
+        );
     }
 }

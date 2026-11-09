@@ -14,7 +14,7 @@ pub mod shadow;
 pub mod texture;
 pub mod theme;
 
-pub use camera_3d::{AmbientLight, Camera3D, DirectionalLight};
+pub use camera_3d::{AmbientLight, Camera3D, DirectionalLight, OrbitCamera3D, SpringArm3D};
 pub use context::{Swapchain, VulkanContext, FRAMES_IN_FLIGHT};
 pub use depth::{DepthBuffer, DirectionalShadowMap, DEPTH_FORMAT};
 pub use font::TrueTypeFont;
