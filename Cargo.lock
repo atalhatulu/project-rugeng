@@ -1710,6 +1710,7 @@ dependencies = [
  "rugeng_core",
  "rugeng_physics",
  "rugeng_render",
+ "rugeng_scheduler",
  "winit",
 ]
 

@@ -150,6 +150,8 @@ pub(crate) struct App {
     pub(crate) fps_timer: Instant,
     pub(crate) frame_count: u64,
     pub(crate) ttf_font: Option<TrueTypeFont>,
+    pub(crate) thread_pool: Arc<rugeng_scheduler::ThreadPool>,
+    pub(crate) scheduler: rugeng_scheduler::SystemDAG,
 }
 
 impl Drop for App {
@@ -462,6 +464,8 @@ impl App {
                 ];
                 paths.iter().find_map(|p| TrueTypeFont::from_file(p).ok())
             },
+            thread_pool: Arc::new(rugeng_scheduler::ThreadPool::new(0)),
+            scheduler: rugeng_scheduler::SystemDAG::new(),
         }
     }
 }

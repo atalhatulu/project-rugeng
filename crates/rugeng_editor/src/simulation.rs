@@ -83,185 +83,251 @@ impl App {
     }
 
     pub(crate) fn step_simulation_single_frame(&mut self, dt: f32) {
-        // 3. Fizik ve Hız Çarpma Mantığı (safe view2_mut_ref: Transform2D mut, Velocity2D ref)
-        // We iterate and update Transform2D based on Velocity2D. For bouncing, we collect bounces or mutate via get_mut.
-        let mut bounce_vels = Vec::new();
-        self.registry
-            .view2_mut_ref::<Transform2D, Velocity2D, _>(|e, tr, vel| {
-                tr.pos += vel.vel * dt;
-                let mut new_vel = vel.vel;
-                let mut bounced = false;
-                if tr.pos.x > 320.0 || tr.pos.x < -320.0 {
-                    new_vel.x = -new_vel.x;
-                    bounced = true;
-                }
-                if tr.pos.y > 220.0 || tr.pos.y < -220.0 {
-                    new_vel.y = -new_vel.y;
-                    bounced = true;
-                }
-                if bounced {
-                    bounce_vels.push((e, new_vel));
-                }
-            });
-        for (e, new_v) in bounce_vels {
-            if let Some(vel) = self.registry.get_mut::<Velocity2D>(e) {
-                vel.vel = new_v;
-            }
+        if self.scheduler.system_count() == 0 {
+            self.init_simulation_scheduler();
         }
 
-        // 4. Betik Yaşam Döngüsü Güncellemesi
-        let mut script_data: Vec<(Entity, ScriptComponent)> = Vec::new();
-        self.registry.view1_ref::<ScriptComponent, _>(|e, s| {
-            script_data.push((e, s.clone()));
-        });
-        for (e, mut script) in script_data {
-            if let Some(tr) = self.registry.get_mut::<Transform2D>(e) {
-                script.update(dt, &mut tr.pos, &mut tr.size, &mut tr.rotation);
-            }
-            if let Some(s) = self.registry.get_mut::<ScriptComponent>(e) {
-                *s = script;
-            }
-        }
+        // SystemDAG executes non-conflicting systems concurrently across workers in self.thread_pool
+        self.scheduler
+            .run_all_dt(&self.registry, &self.thread_pool, dt);
+    }
 
-        // 5. Hiyerarşi (Parent - Child Transform Senkronizasyonu)
-        // We read Parent components and update child Transform2D based on parent's Transform2D
-        let parent_links: Vec<(Entity, Entity)> = {
-            let mut links = Vec::new();
-            self.registry.view1_ref::<Parent, _>(|child, p| {
-                links.push((child, p.entity));
-            });
-            links
-        };
-        for (child, parent) in parent_links {
-            if let Some(parent_tr) = self.registry.get::<Transform2D>(parent).copied() {
-                if let Some(child_tr) = self.registry.get_mut::<Transform2D>(child) {
-                    let (w_pos, w_rot) = compute_world_transform(
-                        Vec2::new(24.0, 0.0),
-                        0.0,
-                        parent_tr.pos,
-                        parent_tr.rotation,
-                    );
-                    child_tr.pos = w_pos;
-                    child_tr.rotation = w_rot;
-                }
-            }
-        }
+    pub(crate) fn init_simulation_scheduler(&mut self) {
+        use rugeng_scheduler::access::SystemAccess;
 
-        // 6. Katı AABB Çarpışma Ayrıştırması (Penetration Resolution)
-        let col_data: Vec<(Entity, bool, bool, Option<Transform2D>)> = {
-            let mut list = Vec::new();
-            self.registry.view1_ref::<Collider2D, _>(|e, col| {
-                if !col.is_sensor {
-                    let tr = self.registry.get::<Transform2D>(e).copied();
-                    list.push((e, col.is_sensor, col.is_dynamic, tr));
-                }
-            });
-            list
-        };
+        self.scheduler = rugeng_scheduler::SystemDAG::new();
 
-        for i in 0..col_data.len() {
-            for j in (i + 1)..col_data.len() {
-                let (e_a, _, is_dyn_a, tr_a_opt) = col_data[i];
-                let (e_b, _, is_dyn_b, tr_b_opt) = col_data[j];
+        // 1. Physics 2D System: Transform2D (Write) + Velocity2D (Read/Write)
+        self.scheduler.add_system(
+            "Physics2D",
+            SystemAccess::new()
+                .with_write::<Transform2D>()
+                .with_write::<Velocity2D>(),
+            |registry, _pool, dt| {
+                // SAFETY: SystemAccess guarantees exclusive access to Transform2D and Velocity2D in this system.
+                let pool_tr = unsafe { registry.storage_mut::<Transform2D>() };
+                let pool_vel = unsafe { registry.storage_mut::<Velocity2D>() };
 
-                if !is_dyn_a && !is_dyn_b {
-                    continue;
-                }
-
-                // SAFETY: We verify distinct entities (i != j implies e_a != e_b).
-                // Both entity positions are resolved and written back through safe registry getters.
-                debug_assert_ne!(e_a, e_b, "Colliders in pair resolution must be distinct");
-
-                let cur_a_opt = self.registry.get::<Transform2D>(e_a).copied().or(tr_a_opt);
-                let cur_b_opt = self.registry.get::<Transform2D>(e_b).copied().or(tr_b_opt);
-
-                if let (Some(mut tr_a), Some(mut tr_b)) = (cur_a_opt, cur_b_opt) {
-                    if resolve_aabb_collision(
-                        &mut tr_a.pos,
-                        tr_a.size,
-                        is_dyn_a,
-                        &mut tr_b.pos,
-                        tr_b.size,
-                        is_dyn_b,
-                    ) {
-                        if let Some(t) = self.registry.get_mut::<Transform2D>(e_a) {
-                            t.pos = tr_a.pos;
+                let (entities, transforms) = pool_tr.split_entities_and_components_mut();
+                for (idx, &e) in entities.iter().enumerate() {
+                    if let Some(vel) = pool_vel.get_mut(e) {
+                        let tr = &mut transforms[idx];
+                        tr.pos += vel.vel * dt;
+                        if tr.pos.x > 320.0 || tr.pos.x < -320.0 {
+                            vel.vel.x = -vel.vel.x;
                         }
-                        if let Some(t) = self.registry.get_mut::<Transform2D>(e_b) {
-                            t.pos = tr_b.pos;
+                        if tr.pos.y > 220.0 || tr.pos.y < -220.0 {
+                            vel.vel.y = -vel.vel.y;
                         }
                     }
                 }
-            }
-        }
+            },
+        );
 
-        // 7. 2D Sprite Kare Animasyon Güncellemesi
-        let mut anim_updates = Vec::new();
-        self.registry
-            .view1_mut::<Animation2DComponent, _>(|e, anim| {
-                if anim.update(dt) {
-                    if let Some(tex_name) = anim.current_texture_name() {
-                        anim_updates.push((e, tex_name.to_string()));
+        // 2. Script System: ScriptComponent (Write) + Transform2D (Write)
+        self.scheduler.add_system(
+            "Scripts",
+            SystemAccess::new()
+                .with_write::<ScriptComponent>()
+                .with_write::<Transform2D>(),
+            |registry, _pool, dt| {
+                // SAFETY: SystemAccess guarantees exclusive access to ScriptComponent and Transform2D.
+                let pool_scripts = unsafe { registry.storage_mut::<ScriptComponent>() };
+                let pool_tr = unsafe { registry.storage_mut::<Transform2D>() };
+
+                let (entities, scripts) = pool_scripts.split_entities_and_components_mut();
+                for (idx, &e) in entities.iter().enumerate() {
+                    if let Some(tr) = pool_tr.get_mut(e) {
+                        scripts[idx].update(dt, &mut tr.pos, &mut tr.size, &mut tr.rotation);
                     }
                 }
-            });
-        for (e, tex_name) in anim_updates {
-            if let Some(tex_comp) = self.registry.get_mut::<SpriteTexture>(e) {
-                tex_comp.name = tex_name;
-            }
-        }
+            },
+        );
 
-        // 8. Tilemap Katı Karoları ile Dinamik Nesne Çarpışması
-        let solid_boxes_list: Vec<Vec<(Vec2, Vec2)>> = {
-            let mut list = Vec::new();
-            self.registry.view1_ref::<Tilemap2DComponent, _>(|_e, map| {
-                list.push(map.solid_aabb_boxes());
-            });
-            list
-        };
+        // 3. Hierarchy System: Parent (Read) + Transform2D (Write)
+        self.scheduler.add_system(
+            "Hierarchy",
+            SystemAccess::new()
+                .with_read::<Parent>()
+                .with_write::<Transform2D>(),
+            |registry, _pool, _dt| {
+                // SAFETY: SystemAccess guarantees read access to Parent and exclusive access to Transform2D.
+                let pool_parent = unsafe { registry.storage::<Parent>() };
+                let parent_links: Vec<(Entity, Entity)> = pool_parent
+                    .entities()
+                    .iter()
+                    .copied()
+                    .zip(pool_parent.components().iter().map(|p| p.entity))
+                    .collect();
 
-        if !solid_boxes_list.is_empty() {
-            let dynamic_colliders: Vec<Entity> = {
-                let mut list = Vec::new();
-                self.registry.view1_ref::<Collider2D, _>(|e, col| {
-                    if col.is_dynamic && !col.is_sensor {
-                        list.push(e);
-                    }
-                });
-                list
-            };
-
-            for e in dynamic_colliders {
-                if let Some(tr) = self.registry.get_mut::<Transform2D>(e) {
-                    for solid_boxes in &solid_boxes_list {
-                        for &(tile_center, tile_sz) in solid_boxes {
-                            let mut dummy_tile_pos = tile_center;
-                            resolve_aabb_collision(
-                                &mut tr.pos,
-                                tr.size,
-                                true,
-                                &mut dummy_tile_pos,
-                                tile_sz,
-                                false,
+                let pool_tr = unsafe { registry.storage_mut::<Transform2D>() };
+                for (child, parent) in parent_links {
+                    if let Some(parent_tr) = pool_tr.get(parent).copied() {
+                        if let Some(child_tr) = pool_tr.get_mut(child) {
+                            let (w_pos, w_rot) = compute_world_transform(
+                                Vec2::new(24.0, 0.0),
+                                0.0,
+                                parent_tr.pos,
+                                parent_tr.rotation,
                             );
+                            child_tr.pos = w_pos;
+                            child_tr.rotation = w_rot;
                         }
                     }
                 }
-            }
-        }
+            },
+        );
 
-        // 9. 3D Simülasyon Adımı (3D Varlıkların Transform Hareketi)
-        self.registry.view1_mut::<Transform3D, _>(|_e, tr3d| {
-            let delta_rot = glam::Quat::from_rotation_y(0.5 * dt);
-            tr3d.rotation = (tr3d.rotation * delta_rot).normalize();
-            tr3d.translation.y += 0.1 * dt;
-        });
+        // 4. Collider 2D & Tilemap System: Collider2D (Read), Tilemap2DComponent (Read), Transform2D (Write)
+        self.scheduler.add_system(
+            "Colliders2D",
+            SystemAccess::new()
+                .with_read::<Collider2D>()
+                .with_read::<Tilemap2DComponent>()
+                .with_write::<Transform2D>(),
+            |registry, _pool, _dt| {
+                // SAFETY: SystemAccess guarantees read access to Collider2D & Tilemap2DComponent, exclusive to Transform2D.
+                let pool_col = unsafe { registry.storage::<Collider2D>() };
+                let col_data: Vec<(Entity, bool, bool)> = pool_col
+                    .entities()
+                    .iter()
+                    .copied()
+                    .zip(pool_col.components().iter())
+                    .filter(|(_, col)| !col.is_sensor)
+                    .map(|(e, col)| (e, col.is_sensor, col.is_dynamic))
+                    .collect();
 
-        // 10. 3D İskelet Animasyonu Güncellemesi
-        self.registry
-            .view1_mut::<Animation3DComponent, _>(|_e, anim3d| {
-                anim3d.update(dt);
-            });
+                let pool_tr = unsafe { registry.storage_mut::<Transform2D>() };
+
+                for i in 0..col_data.len() {
+                    for j in (i + 1)..col_data.len() {
+                        let (e_a, _, is_dyn_a) = col_data[i];
+                        let (e_b, _, is_dyn_b) = col_data[j];
+
+                        if !is_dyn_a && !is_dyn_b {
+                            continue;
+                        }
+
+                        debug_assert_ne!(e_a, e_b, "Colliders in pair resolution must be distinct");
+
+                        let cur_a_opt = pool_tr.get(e_a).copied();
+                        let cur_b_opt = pool_tr.get(e_b).copied();
+
+                        if let (Some(mut tr_a), Some(mut tr_b)) = (cur_a_opt, cur_b_opt) {
+                            if resolve_aabb_collision(
+                                &mut tr_a.pos,
+                                tr_a.size,
+                                is_dyn_a,
+                                &mut tr_b.pos,
+                                tr_b.size,
+                                is_dyn_b,
+                            ) {
+                                if let Some(t) = pool_tr.get_mut(e_a) {
+                                    t.pos = tr_a.pos;
+                                }
+                                if let Some(t) = pool_tr.get_mut(e_b) {
+                                    t.pos = tr_b.pos;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Tilemap Solid Collisions
+                let pool_tilemap = unsafe { registry.storage::<Tilemap2DComponent>() };
+                let solid_boxes_list: Vec<Vec<(Vec2, Vec2)>> = pool_tilemap
+                    .components()
+                    .iter()
+                    .map(|map| map.solid_aabb_boxes())
+                    .collect();
+
+                if !solid_boxes_list.is_empty() {
+                    let dynamic_colliders: Vec<Entity> = col_data
+                        .iter()
+                        .filter(|(_, _, is_dyn)| *is_dyn)
+                        .map(|(e, _, _)| *e)
+                        .collect();
+
+                    for e in dynamic_colliders {
+                        if let Some(tr) = pool_tr.get_mut(e) {
+                            for solid_boxes in &solid_boxes_list {
+                                for &(tile_center, tile_sz) in solid_boxes {
+                                    let mut dummy_tile_pos = tile_center;
+                                    resolve_aabb_collision(
+                                        &mut tr.pos,
+                                        tr.size,
+                                        true,
+                                        &mut dummy_tile_pos,
+                                        tile_sz,
+                                        false,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        );
+
+        // 5. 2D Sprite Animation System: Animation2DComponent (Write) + SpriteTexture (Write)
+        // Disjoint from Transform2D! Can execute concurrently with 2D physics or 3D systems.
+        self.scheduler.add_system(
+            "Animations2D",
+            SystemAccess::new()
+                .with_write::<Animation2DComponent>()
+                .with_write::<SpriteTexture>(),
+            |registry, _pool, dt| {
+                // SAFETY: SystemAccess guarantees exclusive access to Animation2DComponent and SpriteTexture.
+                let pool_anim = unsafe { registry.storage_mut::<Animation2DComponent>() };
+                let pool_tex = unsafe { registry.storage_mut::<SpriteTexture>() };
+
+                let (entities, anims) = pool_anim.split_entities_and_components_mut();
+                for (idx, &e) in entities.iter().enumerate() {
+                    let anim = &mut anims[idx];
+                    if anim.update(dt) {
+                        if let Some(tex_name) = anim.current_texture_name() {
+                            if let Some(tex_comp) = pool_tex.get_mut(e) {
+                                tex_comp.name = tex_name.to_string();
+                            }
+                        }
+                    }
+                }
+            },
+        );
+
+        // 6. 3D Transform Motion System: Transform3D (Write)
+        // Completely disjoint from all 2D systems! Executes in parallel with 2D systems.
+        self.scheduler.add_system(
+            "Motion3D",
+            SystemAccess::new().with_write::<Transform3D>(),
+            |registry, _pool, dt| {
+                // SAFETY: SystemAccess guarantees exclusive access to Transform3D.
+                let pool_tr3d = unsafe { registry.storage_mut::<Transform3D>() };
+                let (_, transforms) = pool_tr3d.split_entities_and_components_mut();
+                let delta_rot = glam::Quat::from_rotation_y(0.5 * dt);
+                for tr3d in transforms {
+                    tr3d.rotation = (tr3d.rotation * delta_rot).normalize();
+                    tr3d.translation.y += 0.1 * dt;
+                }
+            },
+        );
+
+        // 7. 3D Skeletal Animation System: Animation3DComponent (Write)
+        // Completely disjoint from 2D systems and 3D transforms! Executes in parallel.
+        self.scheduler.add_system(
+            "Animations3D",
+            SystemAccess::new().with_write::<Animation3DComponent>(),
+            |registry, _pool, dt| {
+                // SAFETY: SystemAccess guarantees exclusive access to Animation3DComponent.
+                let pool_anim3d = unsafe { registry.storage_mut::<Animation3DComponent>() };
+                let (_, anims) = pool_anim3d.split_entities_and_components_mut();
+                for anim in anims {
+                    anim.update(dt);
+                }
+            },
+        );
+
+        self.scheduler.build_schedule();
     }
 
     /// Simülasyonu başlatır ve mevcut sahne durumunun (2D ve 3D) snapshot'ını alır
@@ -303,5 +369,55 @@ impl App {
                 *cur_a = a;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulation_scheduler_parallel_stages_and_concurrency() {
+        let mut app = App::new();
+        app.init_simulation_scheduler();
+
+        // 7 systems are registered:
+        // 1. Physics2D (Write Transform2D, Write Velocity2D)
+        // 2. Scripts (Write ScriptComponent, Write Transform2D)
+        // 3. Hierarchy (Read Parent, Write Transform2D)
+        // 4. Colliders2D (Read Collider2D, Read Tilemap2DComponent, Write Transform2D)
+        // 5. Animations2D (Write Animation2DComponent, Write SpriteTexture)
+        // 6. Motion3D (Write Transform3D)
+        // 7. Animations3D (Write Animation3DComponent)
+        assert_eq!(app.scheduler.system_count(), 7);
+
+        // Disjoint verification:
+        // Systems 5 (Animations2D), 6 (Motion3D), and 7 (Animations3D) are completely disjoint
+        // from each other and can run concurrently in the stages!
+        let stages = app.scheduler.stages();
+        let max_stage_size = stages
+            .iter()
+            .map(|s| s.system_indices.len())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_stage_size >= 2,
+            "At least two independent systems must execute in parallel within the same stage, found max {}",
+            max_stage_size
+        );
+
+        // Step simulation for a frame
+        let initial_e1_pos = app
+            .registry
+            .get::<Transform2D>(Entity::new(0, 0))
+            .map(|t| t.pos);
+        app.step_simulation_single_frame(1.0 / 60.0);
+        let stepped_e1_pos = app
+            .registry
+            .get::<Transform2D>(Entity::new(0, 0))
+            .map(|t| t.pos);
+
+        // Entities with velocity moved
+        assert_eq!(initial_e1_pos, stepped_e1_pos); // e1 has no velocity
     }
 }

@@ -8,6 +8,7 @@ rugeng_core = { path = "../rugeng_core" }
 rugeng_render = { path = "../rugeng_render" }
 rugeng_physics = { path = "../rugeng_physics" }
 rugeng_assets = { path = "../rugeng_assets" }
+rugeng_scheduler = { path = "../rugeng_scheduler" }
 winit = { version = "0.30", features = ["rwh_06"] }
 glam = { workspace = true }
 ash = "0.38"
