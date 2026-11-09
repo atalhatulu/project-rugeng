@@ -85,6 +85,11 @@ pub(crate) struct EditorState {
     pub(crate) dock_left_w: f32,
     pub(crate) dock_right_w: f32,
     pub(crate) dock_bottom_h: f32,
+    pub(crate) open_scenes: Vec<OpenSceneTab>,
+    pub(crate) active_scene_tab: usize,
+    pub(crate) show_new_scene_dialog: bool,
+    pub(crate) show_node_library_dialog: bool,
+    pub(crate) node_library_search: String,
 }
 
 impl EditorState {
@@ -259,6 +264,16 @@ impl App {
             dock_left_w: DockLayout::DEFAULT_LEFT_W,
             dock_right_w: DockLayout::DEFAULT_RIGHT_W,
             dock_bottom_h: DockLayout::DEFAULT_BOTTOM_H,
+            open_scenes: vec![OpenSceneTab {
+                path: Some("scenes/main.scene".to_string()),
+                name: "main.scene".to_string(),
+                is_dirty: false,
+                is_3d: false,
+            }],
+            active_scene_tab: 0,
+            show_new_scene_dialog: false,
+            show_node_library_dialog: false,
+            node_library_search: String::new(),
         };
 
         editor.refresh_files();
@@ -1238,8 +1253,20 @@ impl ApplicationHandler for App {
                                                 ]
                                             };
 
+                                            let spawn_world_pos = if target_ent.is_none() {
+                                                let cam = &self.editor.camera;
+                                                let vp_center = Vec2::new(
+                                                    vp_x + vp_w * 0.5,
+                                                    vp_canvas_y + vp_canvas_h * 0.5,
+                                                );
+                                                Some((mouse - vp_center) / cam.zoom + cam.pos)
+                                            } else {
+                                                None
+                                            };
+
                                             self.editor.context_menu = Some(ContextMenu {
                                                 screen_pos: mouse,
+                                                spawn_world_pos,
                                                 target_entity: target_ent,
                                                 items,
                                             });
@@ -2693,6 +2720,7 @@ mod tests {
         // Boşlukta açılan Context Menu simülasyonu
         let ctx = ContextMenu {
             screen_pos: Vec2::new(400.0, 300.0),
+            spawn_world_pos: Some(Vec2::new(50.0, 50.0)),
             target_entity: None,
             items: vec![
                 ContextMenuItem {
@@ -2736,6 +2764,7 @@ mod tests {
 
         let ent_ctx = ContextMenu {
             screen_pos: Vec2::new(500.0, 300.0),
+            spawn_world_pos: None,
             target_entity: Some(test_e),
             items: vec![ContextMenuItem {
                 label: "[Z+] Z-Index Artir (+1)".to_string(),
@@ -3010,5 +3039,157 @@ mod tests {
         assert_eq!(m3.color, [0.2, 0.8, 0.4, 1.0]);
         assert!((m3.roughness - 0.3).abs() < 1e-4);
         assert!((m3.metallic - 0.7).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_dynamic_scene_tabs_lifecycle() {
+        let mut app = App::new();
+        assert_eq!(app.editor.open_scenes.len(), 1);
+        assert_eq!(app.editor.active_scene_tab, 0);
+
+        // Boş 2D sahne oluştur
+        app.create_empty_2d_scene();
+        assert_eq!(app.editor.open_scenes.len(), 2);
+        assert_eq!(app.editor.active_scene_tab, 1);
+        assert!(!app.editor.open_scenes[1].is_3d);
+
+        // Boş 3D sahne oluştur
+        app.create_empty_3d_scene();
+        assert_eq!(app.editor.open_scenes.len(), 3);
+        assert_eq!(app.editor.active_scene_tab, 2);
+        assert!(app.editor.open_scenes[2].is_3d);
+        assert_eq!(app.editor.workspace, WorkspaceMode::ThreeD);
+
+        // 1. Sekmeye geçiş yap (untitled 2D)
+        app.switch_to_scene_tab(1);
+        assert_eq!(app.editor.active_scene_tab, 1);
+
+        // 2. Sekmeyi kapat (3D olan)
+        app.close_scene_tab(2);
+        assert_eq!(app.editor.open_scenes.len(), 2);
+
+        // Tüm sekmeleri kapatma davranışı (otomatik yeni 2D açar)
+        app.close_scene_tab(0);
+        app.close_scene_tab(0);
+        assert_eq!(app.editor.open_scenes.len(), 1);
+        assert_eq!(app.editor.active_scene_tab, 0);
+    }
+
+    #[test]
+    fn test_create_empty_2d_and_3d_scene_templates() {
+        let mut app = App::new();
+
+        // 2D Şablonu
+        app.create_empty_2d_scene();
+        assert_eq!(app.editor.workspace, WorkspaceMode::TwoD);
+        let entities_2d = app.registry.entities::<Transform2D>();
+        assert_eq!(
+            entities_2d.len(),
+            1,
+            "Boş 2D sahne 1 adet kök Node2D içermeli"
+        );
+        let root_2d = entities_2d[0];
+        assert_eq!(
+            app.registry
+                .get::<NodeName>(root_2d)
+                .map(|n| n.name.as_str()),
+            Some("Node2D_Root")
+        );
+
+        // 3D Şablonu
+        app.create_empty_3d_scene();
+        assert_eq!(app.editor.workspace, WorkspaceMode::ThreeD);
+        let entities_3d = app.registry.entities::<Transform3D>();
+        assert_eq!(
+            entities_3d.len(),
+            3,
+            "Boş 3D sahne kök, zemin düzlemi ve merkez küp içermeli"
+        );
+
+        let mut has_root = false;
+        let mut has_ground = false;
+        let mut has_cube = false;
+        for e in entities_3d {
+            if let Some(n) = app.registry.get::<NodeName>(e) {
+                if n.name == "World3D_Root" {
+                    has_root = true;
+                } else if n.name == "Ground_Plane" {
+                    has_ground = true;
+                } else if n.name == "Center_Cube" {
+                    has_cube = true;
+                }
+            }
+        }
+        assert!(
+            has_root && has_ground && has_cube,
+            "3D sahne bileşenleri eksiksiz üretilmeli"
+        );
+    }
+
+    #[test]
+    fn test_context_menu_spawn_at_world_pos() {
+        let mut app = App::new();
+        let target_world = Vec2::new(145.0, -82.0);
+
+        let ctx = ContextMenu {
+            screen_pos: Vec2::new(500.0, 400.0),
+            spawn_world_pos: Some(target_world),
+            target_entity: None,
+            items: vec![ContextMenuItem {
+                label: "[+] 2D Dusman (Bug)".to_string(),
+                shortcut: "".to_string(),
+                action_id: "add_enemy".to_string(),
+            }],
+        };
+        app.editor.context_menu = Some(ctx);
+
+        // Tıklamayı simüle et
+        app.handle_mouse_click(Vec2::new(520.0, 412.0), 1280.0, 720.0, false);
+        let spawned = app.editor.selected_entity.expect("Nesne seçilmiş olmalı");
+        let tr = app
+            .registry
+            .get::<Transform2D>(spawned)
+            .expect("Transform2D olmalı");
+        assert_eq!(
+            tr.pos, target_world,
+            "Nesne sağ tık koordinatında spawn edilmeli"
+        );
+    }
+
+    #[test]
+    fn test_filesystem_create_folder_and_scene() {
+        let mut app = App::new();
+        let test_dir = std::env::temp_dir().join("rugeng_fs_test");
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&test_dir).unwrap();
+        app.editor.current_path = test_dir.clone();
+
+        // 1. Klasör oluşturma butonuna tıklama (left_w = 260.0, left_bot_y = 350.0)
+        let layout = DockLayout::new(1280.0, 720.0);
+        let btn_klasor_x = layout.left_w - 110.0;
+        let btn_y = layout.left_bot_y + 12.0;
+        app.handle_mouse_click(Vec2::new(btn_klasor_x, btn_y), 1280.0, 720.0, false);
+
+        assert!(
+            app.editor
+                .files_in_dir
+                .iter()
+                .any(|f| f.is_dir && f.name.starts_with("yeni_klasor_")),
+            "FileSystem içinde yeni klasör oluşmalı"
+        );
+
+        // 2. Sahne oluşturma butonuna tıklama
+        let btn_sahne_x = layout.left_w - 38.0;
+        app.handle_mouse_click(Vec2::new(btn_sahne_x, btn_y), 1280.0, 720.0, false);
+
+        assert!(
+            app.editor
+                .files_in_dir
+                .iter()
+                .any(|f| !f.is_dir && f.name.ends_with(".scene")),
+            "FileSystem içinde yeni .scene dosyası oluşmalı"
+        );
+
+        let _ = std::fs::remove_dir_all(&test_dir);
     }
 }

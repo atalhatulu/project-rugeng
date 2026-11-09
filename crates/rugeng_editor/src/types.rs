@@ -174,6 +174,22 @@ pub struct BoxSelection {
     pub current_world: Vec2,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenSceneTab {
+    pub path: Option<String>,
+    pub name: String,
+    pub is_dirty: bool,
+    pub is_3d: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NodeLibraryItem {
+    pub category: &'static str,
+    pub name: &'static str,
+    pub preset_id: &'static str,
+    pub is_3d: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct ContextMenuItem {
     pub label: String,
@@ -184,6 +200,7 @@ pub struct ContextMenuItem {
 #[derive(Clone, Debug)]
 pub struct ContextMenu {
     pub screen_pos: Vec2,
+    pub spawn_world_pos: Option<Vec2>,
     pub target_entity: Option<Entity>,
     pub items: Vec<ContextMenuItem>,
 }
@@ -325,7 +342,7 @@ impl EditorCamera3D {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum WorkspaceMode {
     TwoD,
     ThreeD,

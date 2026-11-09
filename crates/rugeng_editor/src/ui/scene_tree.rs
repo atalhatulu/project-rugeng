@@ -737,6 +737,51 @@ impl App {
             text_norm,
         );
 
+        // FileSystem Aksiyon Butonları: [+ Klasor] ve [+ Sahne]
+        let btn_klasor_x = left_w - 146.0;
+        instances.push(QuadInstance::new(
+            [btn_klasor_x, left_bot_y + 4.0],
+            [68.0, 18.0],
+            theme.btn_normal,
+            0,
+        ));
+        instances.push(QuadInstance::new(
+            [btn_klasor_x, left_bot_y + 4.0],
+            [68.0, 1.0],
+            theme.border_subtle,
+            0,
+        ));
+        font::draw_text(
+            instances,
+            "+ Klasor",
+            btn_klasor_x + 8.0,
+            left_bot_y + 7.0,
+            1.15,
+            godot_yellow,
+        );
+
+        let btn_sahne_x = left_w - 72.0;
+        instances.push(QuadInstance::new(
+            [btn_sahne_x, left_bot_y + 4.0],
+            [66.0, 18.0],
+            theme.btn_normal,
+            0,
+        ));
+        instances.push(QuadInstance::new(
+            [btn_sahne_x, left_bot_y + 4.0],
+            [66.0, 1.0],
+            theme.border_subtle,
+            0,
+        ));
+        font::draw_text(
+            instances,
+            "+ Sahne",
+            btn_sahne_x + 8.0,
+            left_bot_y + 7.0,
+            1.15,
+            godot_green,
+        );
+
         // Yol ve Arama Çubukları
         let fs_bar_y = left_bot_y + 28.0;
         instances.push(QuadInstance::new(
@@ -866,6 +911,250 @@ impl App {
                 if is_f_sel { text_norm } else { text_dim },
             );
             f_y += 20.0;
+        }
+
+        // =========================================================================
+        // 4. DÜĞÜM / VARLIK KÜTÜPHANESİ POPUP (NODE LIBRARY DIALOG)
+        // =========================================================================
+        if self.editor.show_node_library_dialog {
+            let dlg_w = 320.0;
+            let dlg_h = 360.0;
+            let dlg_x = (screen_w - dlg_w) * 0.5;
+            let dlg_y = (screen_h - dlg_h) * 0.5;
+
+            // Arka plan karartması
+            instances.push(QuadInstance::new(
+                [0.0, 0.0],
+                [screen_w, screen_h],
+                [10, 12, 16, 180],
+                0,
+            ));
+
+            // Diyalog kutusu ve gölge
+            instances.push(QuadInstance::new(
+                [dlg_x + 4.0, dlg_y + 4.0],
+                [dlg_w, dlg_h],
+                [4, 6, 8, 220],
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y],
+                [dlg_w, dlg_h],
+                theme.bg_panel,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y],
+                [dlg_w, 2.0],
+                godot_green,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y + dlg_h - 1.0],
+                [dlg_w, 1.0],
+                border_col,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y],
+                [1.0, dlg_h],
+                border_col,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x + dlg_w - 1.0, dlg_y],
+                [1.0, dlg_h],
+                border_col,
+                0,
+            ));
+
+            // Başlık
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y],
+                [dlg_w, 28.0],
+                bg_header_act,
+                0,
+            ));
+            font::draw_text(
+                instances,
+                "Yeni Dugum Olustur (Node Library)",
+                dlg_x + 12.0,
+                dlg_y + 8.0,
+                1.3,
+                text_norm,
+            );
+            // Kapat [X]
+            font::draw_text(
+                instances,
+                "[X]",
+                dlg_x + dlg_w - 28.0,
+                dlg_y + 8.0,
+                1.3,
+                godot_red,
+            );
+
+            // Arama Kutusu
+            let search_y = dlg_y + 34.0;
+            instances.push(QuadInstance::new(
+                [dlg_x + 12.0, search_y],
+                [dlg_w - 24.0, 22.0],
+                theme.input_bg,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x + 12.0, search_y],
+                [dlg_w - 24.0, 1.0],
+                theme.border_subtle,
+                0,
+            ));
+            let s_text = if self.editor.node_library_search.is_empty() {
+                "Dugum Ara (Gemi, Kup, Harita, Isik)..."
+            } else {
+                &self.editor.node_library_search
+            };
+            font::draw_text(
+                instances,
+                s_text,
+                dlg_x + 18.0,
+                search_y + 5.0,
+                1.2,
+                if self.editor.node_library_search.is_empty() {
+                    text_dim
+                } else {
+                    text_norm
+                },
+            );
+
+            // Kütüphane Öğeleri Listesi
+            let items: &[NodeLibraryItem] = &[
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Gemi (PlayerShip)",
+                    preset_id: "ship",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Bocek (EnemyBug)",
+                    preset_id: "enemy",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Kalp (Heart)",
+                    preset_id: "heart",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Enerji (Orb)",
+                    preset_id: "orb",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Karo Haritasi (Tilemap)",
+                    preset_id: "tilemap",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Metin (Label/Text)",
+                    preset_id: "text",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Bos Dugum (Node2D)",
+                    preset_id: "empty",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Kup (Mesh3D Cube)",
+                    preset_id: "cube_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Kure (Sphere)",
+                    preset_id: "sphere_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Duzlem (Plane)",
+                    preset_id: "plane_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Silindir (Cylinder)",
+                    preset_id: "cylinder_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Koni (Cone)",
+                    preset_id: "cone_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Piramit (Pyramid)",
+                    preset_id: "pyramid_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Kapsul (Capsule)",
+                    preset_id: "capsule_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Yonlu Isik (Sun)",
+                    preset_id: "directional_light_3d",
+                    is_3d: true,
+                },
+            ];
+
+            let query = self.editor.node_library_search.to_lowercase();
+            let mut it_y = search_y + 28.0;
+            for item in items {
+                if !query.is_empty()
+                    && !item.name.to_lowercase().contains(&query)
+                    && !item.category.to_lowercase().contains(&query)
+                {
+                    continue;
+                }
+                if it_y + 20.0 > dlg_y + dlg_h - 10.0 {
+                    break;
+                }
+
+                instances.push(QuadInstance::new(
+                    [dlg_x + 12.0, it_y],
+                    [dlg_w - 24.0, 20.0],
+                    theme.btn_normal,
+                    0,
+                ));
+                let tag_col = if item.is_3d { godot_yellow } else { godot_blue };
+                instances.push(QuadInstance::new(
+                    [dlg_x + 16.0, it_y + 6.0],
+                    [8.0, 8.0],
+                    tag_col,
+                    0,
+                ));
+                font::draw_text(
+                    instances,
+                    item.name,
+                    dlg_x + 28.0,
+                    it_y + 4.0,
+                    1.2,
+                    text_norm,
+                );
+                it_y += 24.0;
+            }
         }
     }
 }

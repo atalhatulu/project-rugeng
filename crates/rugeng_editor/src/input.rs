@@ -57,6 +57,154 @@ impl App {
             return;
         }
 
+        // Eğer Node Library Dialog açıksa:
+        if self.editor.show_node_library_dialog {
+            let dlg_w = 320.0;
+            let dlg_h = 360.0;
+            let dlg_x = (screen_w - dlg_w) * 0.5;
+            let dlg_y = (screen_h - dlg_h) * 0.5;
+
+            // Kapatma butonu [X]
+            if mouse.x >= dlg_x + dlg_w - 32.0
+                && mouse.x <= dlg_x + dlg_w - 8.0
+                && mouse.y >= dlg_y + 4.0
+                && mouse.y <= dlg_y + 24.0
+            {
+                self.editor.show_node_library_dialog = false;
+                return;
+            }
+
+            // Liste öğeleri
+            let search_y = dlg_y + 34.0;
+            let items: &[NodeLibraryItem] = &[
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Gemi (PlayerShip)",
+                    preset_id: "ship",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Bocek (EnemyBug)",
+                    preset_id: "enemy",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Kalp (Heart)",
+                    preset_id: "heart",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Enerji (Orb)",
+                    preset_id: "orb",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Karo Haritasi (Tilemap)",
+                    preset_id: "tilemap",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Metin (Label/Text)",
+                    preset_id: "text",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "2D",
+                    name: "2D Bos Dugum (Node2D)",
+                    preset_id: "empty",
+                    is_3d: false,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Kup (Mesh3D Cube)",
+                    preset_id: "cube_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Kure (Sphere)",
+                    preset_id: "sphere_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Duzlem (Plane)",
+                    preset_id: "plane_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Silindir (Cylinder)",
+                    preset_id: "cylinder_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Koni (Cone)",
+                    preset_id: "cone_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Piramit (Pyramid)",
+                    preset_id: "pyramid_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Kapsul (Capsule)",
+                    preset_id: "capsule_3d",
+                    is_3d: true,
+                },
+                NodeLibraryItem {
+                    category: "3D",
+                    name: "3D Yonlu Isik (Sun)",
+                    preset_id: "directional_light_3d",
+                    is_3d: true,
+                },
+            ];
+
+            let query = self.editor.node_library_search.to_lowercase();
+            let mut it_y = search_y + 28.0;
+            for item in items {
+                if !query.is_empty()
+                    && !item.name.to_lowercase().contains(&query)
+                    && !item.category.to_lowercase().contains(&query)
+                {
+                    continue;
+                }
+                if it_y + 20.0 > dlg_y + dlg_h - 10.0 {
+                    break;
+                }
+
+                if mouse.x >= dlg_x + 12.0
+                    && mouse.x <= dlg_x + dlg_w - 12.0
+                    && mouse.y >= it_y
+                    && mouse.y <= it_y + 20.0
+                {
+                    self.spawn_preset_entity(item.preset_id);
+                    self.editor.show_node_library_dialog = false;
+                    return;
+                }
+                it_y += 24.0;
+            }
+
+            // Diyalog dışına tıklandıysa kapat
+            if mouse.x < dlg_x
+                || mouse.x > dlg_x + dlg_w
+                || mouse.y < dlg_y
+                || mouse.y > dlg_y + dlg_h
+            {
+                self.editor.show_node_library_dialog = false;
+            }
+            return;
+        }
+
         // Eğer açık bir Sağ Tık Bağlam Menüsü (Context Menu) varsa:
         if let Some(ctx_menu) = self.editor.context_menu.take() {
             let menu_w = 230.0;
@@ -127,7 +275,11 @@ impl App {
                         }
                         preset if preset.starts_with("add_") => {
                             let p = &preset[4..];
-                            self.spawn_preset_entity(p);
+                            if let Some(pos) = ctx_menu.spawn_world_pos {
+                                self.spawn_preset_entity_at(p, pos);
+                            } else {
+                                self.spawn_preset_entity(p);
+                            }
                         }
                         _ => {}
                     }
@@ -493,14 +645,15 @@ impl App {
                 return;
             }
 
-            // [+] Düğüm Ekle Butonu
+            // [+] Düğüm Ekle Butonu -> Node Library Dialog Aç
             let filter_y = menu_h + 26.0;
             if mouse.y >= filter_y
                 && mouse.y <= filter_y + 20.0
                 && mouse.x >= 6.0
                 && mouse.x <= 30.0
             {
-                self.spawn_entity_at_camera();
+                self.editor.show_node_library_dialog = true;
+                self.audio.play("sfx_blip");
                 return;
             }
 
@@ -698,6 +851,58 @@ impl App {
 
         // 3. SOL SÜTUN — ALT PANEL (DOSYA SISTEMI)
         if mouse.x <= left_w && mouse.y >= left_bot_y {
+            // Başlık Aksiyon Butonları: [+ Klasor] ve [+ Sahne]
+            if mouse.y >= left_bot_y + 4.0 && mouse.y <= left_bot_y + 22.0 {
+                let btn_klasor_x = left_w - 146.0;
+                let btn_sahne_x = left_w - 72.0;
+
+                // [+ Klasor]
+                if mouse.x >= btn_klasor_x && mouse.x <= btn_klasor_x + 68.0 {
+                    self.editor.scene_counter += 1;
+                    let folder_name = format!("yeni_klasor_{}", self.editor.scene_counter);
+                    let target_dir = self.editor.current_path.join(&folder_name);
+                    if let Err(e) = std::fs::create_dir_all(&target_dir) {
+                        self.editor.logs.push(LogMessage {
+                            level: "ERROR",
+                            text: format!("Klasor olusturulamadi: {e}"),
+                        });
+                    } else {
+                        self.editor.refresh_files();
+                        self.audio.play("sfx_powerup");
+                        self.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: format!(
+                                "Yeni klasor olusturuldu: res://{}",
+                                target_dir.display()
+                            ),
+                        });
+                    }
+                    return;
+                }
+
+                // [+ Sahne]
+                if mouse.x >= btn_sahne_x && mouse.x <= btn_sahne_x + 66.0 {
+                    self.editor.scene_counter += 1;
+                    let scene_name = format!("yeni_sahne_{}.scene", self.editor.scene_counter);
+                    let target_scene = self.editor.current_path.join(&scene_name);
+                    let empty_scene = rugeng_core::SceneData::new(&scene_name);
+                    let versioned = rugeng_assets::VersionedScene::from_core_scene(&empty_scene);
+                    if let Ok(json) = versioned.to_json() {
+                        let _ = std::fs::write(&target_scene, json);
+                        self.editor.refresh_files();
+                        self.audio.play("sfx_powerup");
+                        self.editor.logs.push(LogMessage {
+                            level: "INFO",
+                            text: format!(
+                                "Yeni sahne dosyasi olusturuldu: res://{}",
+                                target_scene.display()
+                            ),
+                        });
+                    }
+                    return;
+                }
+            }
+
             let fs_bar_y = left_bot_y + 28.0;
             // '<' Geri Butonu
             if mouse.y >= fs_bar_y
@@ -789,30 +994,92 @@ impl App {
             && mouse.y > menu_h
             && mouse.y < screen_h - bottom_h
         {
-            // Sahne Sekmeleri (Aktif Sahne, player.scene, + Yeni Sahne)
-            if mouse.y >= menu_h && mouse.y <= menu_h + scene_tab_h {
-                let scene_title = format!(
-                    "{}{}",
-                    std::path::Path::new(&self.editor.current_scene_path)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy(),
-                    if self.editor.is_scene_dirty {
-                        " (*)"
-                    } else {
-                        ""
-                    }
-                );
-                let tab1_w = ((scene_title.len() as f32) * 7.5 + 36.0).max(120.0);
-                let tab2_x = vp_x + 8.0 + tab1_w + 4.0;
-                let plus_x = tab2_x + 94.0;
+            // A. Sahne Sekmeleri ve Yeni Sahne Açılır Menüsü
+            // Eğer show_new_scene_dialog açıksa:
+            if self.editor.show_new_scene_dialog {
+                let mut p_x = vp_x + 8.0;
+                for tab in &self.editor.open_scenes {
+                    let display_title =
+                        format!("{}{}", tab.name, if tab.is_dirty { " (*)" } else { "" });
+                    let tab_w = ((display_title.len() as f32) * 7.5 + 46.0).max(90.0);
+                    p_x += tab_w + 4.0;
+                }
+                let dlg_w = 190.0;
+                let dlg_h = 76.0;
+                let dlg_x = p_x;
+                let dlg_y = menu_h + scene_tab_h + 2.0;
 
-                if mouse.x >= vp_x + 8.0 && mouse.x <= tab2_x {
-                    // Aktif sahne
-                } else if mouse.x >= tab2_x && mouse.x <= plus_x {
-                    self.load_scene_from_file("scenes/main.scene");
-                } else if mouse.x >= plus_x && mouse.x <= plus_x + 36.0 {
-                    self.new_scene();
+                // Seçenek 1: [Boş 2D Sahne]
+                let opt1_y = dlg_y + 8.0;
+                if mouse.x >= dlg_x + 6.0
+                    && mouse.x <= dlg_x + dlg_w - 6.0
+                    && mouse.y >= opt1_y
+                    && mouse.y <= opt1_y + 26.0
+                {
+                    self.create_empty_2d_scene();
+                    self.editor.show_new_scene_dialog = false;
+                    return;
+                }
+
+                // Seçenek 2: [Boş 3D Sahne]
+                let opt2_y = dlg_y + 40.0;
+                if mouse.x >= dlg_x + 6.0
+                    && mouse.x <= dlg_x + dlg_w - 6.0
+                    && mouse.y >= opt2_y
+                    && mouse.y <= opt2_y + 26.0
+                {
+                    self.create_empty_3d_scene();
+                    self.editor.show_new_scene_dialog = false;
+                    return;
+                }
+
+                if mouse.x < dlg_x
+                    || mouse.x > dlg_x + dlg_w
+                    || mouse.y < dlg_y
+                    || mouse.y > dlg_y + dlg_h
+                {
+                    self.editor.show_new_scene_dialog = false;
+                }
+            }
+
+            // Sahne Sekmeleri Çubuğu Tıklamaları (Geçiş, Kapatma ve + Butonu)
+            if mouse.y >= menu_h && mouse.y <= menu_h + scene_tab_h {
+                let mut cur_tab_x = vp_x + 8.0;
+                let mut clicked_tab_action = None;
+
+                for (idx, tab) in self.editor.open_scenes.iter().enumerate() {
+                    let display_title =
+                        format!("{}{}", tab.name, if tab.is_dirty { " (*)" } else { "" });
+                    let tab_w = ((display_title.len() as f32) * 7.5 + 46.0).max(90.0);
+                    let close_x = cur_tab_x + tab_w - 22.0;
+
+                    if mouse.x >= cur_tab_x && mouse.x <= cur_tab_x + tab_w {
+                        if mouse.x >= close_x {
+                            clicked_tab_action = Some((idx, true)); // Kapat
+                        } else {
+                            clicked_tab_action = Some((idx, false)); // Sekmeye Geç
+                        }
+                        break;
+                    }
+                    cur_tab_x += tab_w + 4.0;
+                }
+
+                if let Some((idx, is_close)) = clicked_tab_action {
+                    if is_close {
+                        self.close_scene_tab(idx);
+                    } else {
+                        self.switch_to_scene_tab(idx);
+                    }
+                    self.audio.play("sfx_blip");
+                    return;
+                }
+
+                // [+] Sekme Ekle (Yeni Sahne Menüsü Aç/Kapa)
+                let plus_x = cur_tab_x;
+                if mouse.x >= plus_x && mouse.x <= plus_x + 36.0 {
+                    self.editor.show_new_scene_dialog = !self.editor.show_new_scene_dialog;
+                    self.audio.play("sfx_blip");
+                    return;
                 }
                 return;
             }

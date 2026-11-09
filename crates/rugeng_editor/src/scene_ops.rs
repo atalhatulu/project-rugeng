@@ -400,6 +400,33 @@ impl App {
                 self.editor.current_scene_path = path.to_string();
                 self.editor.is_scene_dirty = false;
                 self.editor.selected_entity = first_e;
+
+                let title = std::path::Path::new(path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string());
+                let has_3d = !self.registry.entities::<Transform3D>().is_empty();
+
+                // Açık sekmelerde varsa aktif yap, yoksa yeni sekme olarak ekle
+                if let Some(pos) = self
+                    .editor
+                    .open_scenes
+                    .iter()
+                    .position(|t| t.path.as_deref() == Some(path))
+                {
+                    self.editor.active_scene_tab = pos;
+                    self.editor.open_scenes[pos].is_dirty = false;
+                    self.editor.open_scenes[pos].is_3d = has_3d;
+                } else {
+                    self.editor.open_scenes.push(OpenSceneTab {
+                        path: Some(path.to_string()),
+                        name: title,
+                        is_dirty: false,
+                        is_3d: has_3d,
+                    });
+                    self.editor.active_scene_tab = self.editor.open_scenes.len() - 1;
+                }
+
                 self.audio.play("sfx_powerup");
                 self.editor.logs.push(LogMessage {
                     level: "INFO",
@@ -416,19 +443,30 @@ impl App {
     }
 
     pub(crate) fn new_scene(&mut self) {
-        let entities: Vec<Entity> = self.registry.entities::<Transform2D>();
-        for e in entities {
+        self.create_empty_2d_scene();
+    }
+
+    pub(crate) fn create_empty_2d_scene(&mut self) {
+        let entities_2d: Vec<Entity> = self.registry.entities::<Transform2D>();
+        for e in entities_2d {
+            self.cmd_buffer.destroy(e);
+        }
+        let entities_3d: Vec<Entity> = self.registry.entities::<Transform3D>();
+        for e in entities_3d {
             self.cmd_buffer.destroy(e);
         }
         self.cmd_buffer.apply(&mut self.registry);
 
         self.editor.scene_counter += 1;
-        self.editor.current_scene_path =
-            format!("scenes/untitled_{}.scene", self.editor.scene_counter);
+        let path = format!("scenes/untitled_{}.scene", self.editor.scene_counter);
+        let name = format!("untitled_{}.scene", self.editor.scene_counter);
+        self.editor.current_scene_path = path.clone();
         self.editor.is_scene_dirty = true;
         self.editor.scene_tab = SceneTab::World;
+        self.editor.workspace = crate::types::WorkspaceMode::TwoD;
 
         let root = self.registry.create();
+        self.registry.emplace(root, NodeName::new("Node2D_Root"));
         self.registry.emplace(
             root,
             Transform2D {
@@ -451,14 +489,151 @@ impl App {
         );
 
         self.editor.selected_entity = Some(root);
+        self.editor.open_scenes.push(OpenSceneTab {
+            path: Some(path.clone()),
+            name,
+            is_dirty: true,
+            is_3d: false,
+        });
+        self.editor.active_scene_tab = self.editor.open_scenes.len() - 1;
+
         self.audio.play("sfx_powerup");
         self.editor.logs.push(LogMessage {
             level: "INFO",
-            text: format!(
-                "Yeni bos sahne baslatildi -> '{}'",
-                self.editor.current_scene_path
-            ),
+            text: format!("Yeni bos 2D sahne baslatildi -> '{}'", path),
         });
+    }
+
+    pub(crate) fn create_empty_3d_scene(&mut self) {
+        let entities_2d: Vec<Entity> = self.registry.entities::<Transform2D>();
+        for e in entities_2d {
+            self.cmd_buffer.destroy(e);
+        }
+        let entities_3d: Vec<Entity> = self.registry.entities::<Transform3D>();
+        for e in entities_3d {
+            self.cmd_buffer.destroy(e);
+        }
+        self.cmd_buffer.apply(&mut self.registry);
+
+        self.editor.scene_counter += 1;
+        let path = format!("scenes/world3d_{}.scene", self.editor.scene_counter);
+        let name = format!("world3d_{}.scene", self.editor.scene_counter);
+        self.editor.current_scene_path = path.clone();
+        self.editor.is_scene_dirty = true;
+        self.editor.scene_tab = SceneTab::World;
+        self.editor.workspace = crate::types::WorkspaceMode::ThreeD;
+
+        // 3D Kök Düğüm
+        let root = self.registry.create();
+        self.registry.emplace(root, NodeName::new("World3D_Root"));
+        self.registry.emplace(
+            root,
+            Transform3D {
+                translation: glam::Vec3::ZERO,
+                rotation: glam::Quat::IDENTITY,
+                scale: glam::Vec3::ONE,
+            },
+        );
+
+        // Zemin Düzlemi (Plane 3D)
+        let ground = self.registry.create();
+        self.registry.emplace(ground, NodeName::new("Ground_Plane"));
+        self.registry.emplace(
+            ground,
+            Transform3D {
+                translation: glam::Vec3::new(0.0, -0.5, 0.0),
+                rotation: glam::Quat::IDENTITY,
+                scale: glam::Vec3::new(10.0, 0.2, 10.0),
+            },
+        );
+        self.registry.emplace(
+            ground,
+            Mesh3DComponent::with_pbr("plane", [0.45, 0.48, 0.52, 1.0], 0.8, 0.1),
+        );
+        self.registry.emplace(ground, Parent { entity: root });
+
+        // Varsayılan Merkez Küp (Center_Cube)
+        let cube = self.registry.create();
+        self.registry.emplace(cube, NodeName::new("Center_Cube"));
+        self.registry.emplace(
+            cube,
+            Transform3D {
+                translation: glam::Vec3::new(0.0, 0.5, 0.0),
+                rotation: glam::Quat::IDENTITY,
+                scale: glam::Vec3::ONE,
+            },
+        );
+        self.registry.emplace(
+            cube,
+            Mesh3DComponent::with_pbr("cube", [0.9, 0.6, 0.2, 1.0], 0.4, 0.3),
+        );
+        self.registry.emplace(cube, Parent { entity: root });
+
+        self.editor.selected_entity = Some(cube);
+        self.editor.open_scenes.push(OpenSceneTab {
+            path: Some(path.clone()),
+            name,
+            is_dirty: true,
+            is_3d: true,
+        });
+        self.editor.active_scene_tab = self.editor.open_scenes.len() - 1;
+
+        self.audio.play("sfx_powerup");
+        self.editor.logs.push(LogMessage {
+            level: "INFO",
+            text: format!("Yeni bos 3D sahne baslatildi -> '{}'", path),
+        });
+    }
+
+    pub(crate) fn switch_to_scene_tab(&mut self, index: usize) {
+        if index >= self.editor.open_scenes.len() || index == self.editor.active_scene_tab {
+            return;
+        }
+        let target = self.editor.open_scenes[index].clone();
+        if let Some(path) = &target.path {
+            if std::path::Path::new(path).exists() {
+                self.load_scene_from_file(path);
+                self.editor.active_scene_tab = index;
+                if target.is_3d {
+                    self.editor.workspace = crate::types::WorkspaceMode::ThreeD;
+                }
+                return;
+            }
+        }
+        self.editor.active_scene_tab = index;
+        self.editor.current_scene_path = target.path.unwrap_or_else(|| target.name.clone());
+        self.editor.is_scene_dirty = target.is_dirty;
+        if target.is_3d {
+            self.editor.workspace = crate::types::WorkspaceMode::ThreeD;
+        }
+    }
+
+    pub(crate) fn close_scene_tab(&mut self, index: usize) {
+        if index >= self.editor.open_scenes.len() {
+            return;
+        }
+        self.editor.open_scenes.remove(index);
+        if self.editor.open_scenes.is_empty() {
+            // Hiç sekme kalmadıysa otomatik yeni 2D sahne aç
+            self.create_empty_2d_scene();
+        } else {
+            let new_idx = if index >= self.editor.open_scenes.len() {
+                self.editor.open_scenes.len() - 1
+            } else {
+                index
+            };
+            self.editor.active_scene_tab = new_idx;
+            let tab = self.editor.open_scenes[new_idx].clone();
+            if let Some(path) = &tab.path {
+                if std::path::Path::new(path).exists() {
+                    self.load_scene_from_file(path);
+                } else {
+                    self.editor.current_scene_path = path.clone();
+                }
+            } else {
+                self.editor.current_scene_path = tab.name.clone();
+            }
+        }
     }
 
     pub(crate) fn duplicate_selected_entity(&mut self) {
@@ -600,8 +775,12 @@ impl App {
     }
 
     pub(crate) fn spawn_preset_entity(&mut self, preset: &str) {
-        let e = self.registry.create();
         let spawn_pos = self.editor.camera.pos;
+        self.spawn_preset_entity_at(preset, spawn_pos);
+    }
+
+    pub(crate) fn spawn_preset_entity_at(&mut self, preset: &str, spawn_pos: Vec2) {
+        let e = self.registry.create();
         let mut tr = Transform2D {
             pos: spawn_pos,
             size: Vec2::new(40.0, 40.0),
@@ -963,6 +1142,7 @@ impl App {
         });
     }
 
+    #[allow(dead_code)]
     pub(crate) fn spawn_entity_at_camera(&mut self) {
         self.spawn_preset_entity("empty");
     }

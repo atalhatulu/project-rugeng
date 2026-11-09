@@ -47,7 +47,7 @@ impl App {
         // =========================================================================
         // 1. ORTA ALAN: VIEWPORT (SAHNE SEKMLERİ, ARAÇ ÇUBUĞU, CETVEL, 2D TUVAL)
         // =========================================================================
-        // A. Sahne Sekmeleri Çubuğu (Scene Tabs)
+        // A. Sahne Sekmeleri Çubuğu (Dinamik Scene Tabs)
         instances.push(QuadInstance::new(
             [vp_x, menu_h],
             [vp_w, scene_tab_h],
@@ -61,66 +61,68 @@ impl App {
             0,
         ));
 
-        // Tab 1: Aktif Sahne (Dinamik İsim ve * Kirli Bayrağı)
-        let scene_title = format!(
-            "{}{}",
-            std::path::Path::new(&self.editor.current_scene_path)
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy(),
-            if self.editor.is_scene_dirty {
-                " (*)"
-            } else {
-                ""
-            }
-        );
-        let tab1_w = ((scene_title.len() as f32) * 7.5 + 36.0).max(120.0);
-        instances.push(QuadInstance::new(
-            [vp_x + 8.0, menu_h + 3.0],
-            [tab1_w, scene_tab_h - 3.0],
-            bg_header_act,
-            0,
-        ));
-        instances.push(QuadInstance::new(
-            [vp_x + 14.0, menu_h + 9.0],
-            [8.0, 8.0],
-            godot_blue,
-            0,
-        )); // 2D İkon
-        font::draw_text(
-            instances,
-            &scene_title,
-            vp_x + 28.0,
-            menu_h + 8.0,
-            1.3,
-            text_norm,
-        );
+        let mut cur_tab_x = vp_x + 8.0;
+        for (idx, tab) in self.editor.open_scenes.iter().enumerate() {
+            let is_active = idx == self.editor.active_scene_tab;
+            let display_title = format!("{}{}", tab.name, if tab.is_dirty { " (*)" } else { "" });
+            let tab_w = ((display_title.len() as f32) * 7.5 + 46.0).max(90.0);
 
-        // Tab 2: player.scene
-        let tab2_x = vp_x + 8.0 + tab1_w + 4.0;
-        instances.push(QuadInstance::new(
-            [tab2_x, menu_h + 3.0],
-            [90.0, scene_tab_h - 3.0],
-            bg_header_inact,
-            0,
-        ));
-        instances.push(QuadInstance::new(
-            [tab2_x + 6.0, menu_h + 9.0],
-            [8.0, 8.0],
-            godot_yellow,
-            0,
-        ));
-        font::draw_text(
-            instances,
-            "player.scene",
-            tab2_x + 18.0,
-            menu_h + 8.0,
-            1.2,
-            text_dim,
-        );
+            // Sekme arka planı
+            instances.push(QuadInstance::new(
+                [cur_tab_x, menu_h + 3.0],
+                [tab_w, scene_tab_h - 3.0],
+                if is_active {
+                    bg_header_act
+                } else {
+                    bg_header_inact
+                },
+                0,
+            ));
+            // Aktif sekme üst vurgusu
+            if is_active {
+                instances.push(QuadInstance::new(
+                    [cur_tab_x, menu_h + 3.0],
+                    [tab_w, 1.5],
+                    godot_blue,
+                    0,
+                ));
+            }
+
+            // 2D vs 3D İkon
+            let icon_col = if tab.is_3d { godot_yellow } else { godot_blue };
+            instances.push(QuadInstance::new(
+                [cur_tab_x + 6.0, menu_h + 9.0],
+                [8.0, 8.0],
+                icon_col,
+                0,
+            ));
+
+            // Sekme Başlık Metni
+            font::draw_text(
+                instances,
+                &display_title,
+                cur_tab_x + 18.0,
+                menu_h + 8.0,
+                1.25,
+                if is_active { text_norm } else { text_dim },
+            );
+
+            // [x] Kapatma Butonu
+            let close_x = cur_tab_x + tab_w - 18.0;
+            font::draw_text(
+                instances,
+                "x",
+                close_x,
+                menu_h + 8.0,
+                1.2,
+                if is_active { godot_red } else { text_dim },
+            );
+
+            cur_tab_x += tab_w + 4.0;
+        }
 
         // [+] Sekme Ekle (Yeni Sahne Butonu)
-        let plus_x = tab2_x + 94.0;
+        let plus_x = cur_tab_x;
         instances.push(QuadInstance::new(
             [plus_x, menu_h + 3.0],
             [28.0, scene_tab_h - 3.0],
@@ -135,6 +137,99 @@ impl App {
             1.5,
             godot_green,
         );
+
+        // Yeni Sahne Seçim Açılır Menüsü (show_new_scene_dialog)
+        if self.editor.show_new_scene_dialog {
+            let dlg_w = 190.0;
+            let dlg_h = 76.0;
+            let dlg_x = plus_x;
+            let dlg_y = menu_h + scene_tab_h + 2.0;
+
+            // Gölge
+            instances.push(QuadInstance::new(
+                [dlg_x + 3.0, dlg_y + 3.0],
+                [dlg_w, dlg_h],
+                [8, 10, 14, 220],
+                0,
+            ));
+            // Panel
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y],
+                [dlg_w, dlg_h],
+                theme.bg_panel,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y],
+                [dlg_w, 2.0],
+                godot_green,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y + dlg_h - 1.0],
+                [dlg_w, 1.0],
+                border_col,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x, dlg_y],
+                [1.0, dlg_h],
+                border_col,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x + dlg_w - 1.0, dlg_y],
+                [1.0, dlg_h],
+                border_col,
+                0,
+            ));
+
+            // Seçenek 1: [Boş 2D Sahne]
+            let opt1_y = dlg_y + 8.0;
+            instances.push(QuadInstance::new(
+                [dlg_x + 6.0, opt1_y],
+                [dlg_w - 12.0, 26.0],
+                theme.btn_normal,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x + 12.0, opt1_y + 9.0],
+                [8.0, 8.0],
+                godot_blue,
+                0,
+            ));
+            font::draw_text(
+                instances,
+                "Bos 2D Sahne (Node2D)",
+                dlg_x + 26.0,
+                opt1_y + 7.0,
+                1.2,
+                text_norm,
+            );
+
+            // Seçenek 2: [Boş 3D Sahne]
+            let opt2_y = dlg_y + 40.0;
+            instances.push(QuadInstance::new(
+                [dlg_x + 6.0, opt2_y],
+                [dlg_w - 12.0, 26.0],
+                theme.btn_normal,
+                0,
+            ));
+            instances.push(QuadInstance::new(
+                [dlg_x + 12.0, opt2_y + 9.0],
+                [8.0, 8.0],
+                godot_yellow,
+                0,
+            ));
+            font::draw_text(
+                instances,
+                "Bos 3D Sahne (Node3D)",
+                dlg_x + 26.0,
+                opt2_y + 7.0,
+                1.2,
+                text_norm,
+            );
+        }
 
         // B. Viewport Alt Araç Çubuğu (Sub-Toolbar)
         instances.push(QuadInstance::new(
